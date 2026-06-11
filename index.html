@@ -1,0 +1,1029 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>2026 世界杯未来几天预测</title>
+  <style>
+    :root {
+      --bg: #101416;
+      --panel: #f7f4ec;
+      --ink: #18211f;
+      --muted: #5c6763;
+      --line: rgba(24, 33, 31, .14);
+      --accent: #c94b38;
+      --green: #13795b;
+      --gold: #b8871e;
+      --blue: #2366a8;
+      --shadow: 0 18px 50px rgba(0,0,0,.24);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); }
+    .hero {
+      min-height: 72vh;
+      color: #fff;
+      background: linear-gradient(180deg, rgba(8,12,13,.22), rgba(8,12,13,.84)), url('./assets/stadium.jpg') center/cover;
+      display: flex;
+      align-items: end;
+      padding: 34px 24px 52px;
+    }
+    .hero-inner { width: min(1180px, 100%); margin: 0 auto; }
+    .eyebrow { font-size: 13px; letter-spacing: 0; opacity: .82; margin-bottom: 14px; }
+    h1 { margin: 0; font-size: clamp(38px, 6.2vw, 76px); line-height: 1.04; letter-spacing: 0; max-width: none; white-space: nowrap; }
+    .hero p { max-width: 780px; color: rgba(255,255,255,.82); font-size: 18px; line-height: 1.65; margin: 22px 0 0; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 28px; max-width: 900px; }
+    .stat { border: 1px solid rgba(255,255,255,.24); background: rgba(255,255,255,.1); backdrop-filter: blur(10px); padding: 14px 16px; border-radius: 8px; }
+    .stat b { display: block; font-size: 24px; }
+    .stat span { color: rgba(255,255,255,.72); font-size: 13px; }
+    main { background: #e9e4d7; }
+    .wrap { width: min(1180px, 100%); margin: 0 auto; padding: 28px 24px 58px; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+    .toolbar h2 { margin: 0; font-size: 28px; letter-spacing: 0; }
+    .controls, #filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { border: 1px solid var(--line); background: #fffaf0; color: var(--ink); border-radius: 8px; padding: 9px 12px; font-weight: 700; cursor: pointer; }
+    button.active { background: var(--ink); color: #fff; }
+    .notice, .rule-card, .sources { background: #fffaf0; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); line-height: 1.6; }
+    .notice { padding: 14px 16px; margin-bottom: 18px; }
+    .rules { display: grid; grid-template-columns: 1.25fr .75fr; gap: 14px; margin-bottom: 20px; }
+    .rule-card { padding: 18px; }
+    .rule-card h2, .rule-card h3 { margin: 0 0 10px; color: var(--ink); }
+    .rule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .rule-item { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+    .rule-item b { display: block; color: var(--ink); margin-bottom: 4px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); overflow: hidden; }
+    .card-head { display: flex; justify-content: space-between; gap: 12px; padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
+    .date { font-size: 13px; color: var(--muted); font-weight: 700; }
+    .venue { font-size: 12px; color: var(--muted); text-align: right; }
+    .teams { padding: 14px 16px 10px; }
+    .match { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .team { min-width: 0; }
+    .team strong { display: block; font-size: 22px; line-height: 1.12; }
+    .team span { color: var(--muted); font-size: 12px; }
+    .vs { color: var(--accent); font-weight: 900; flex: 0 0 auto; }
+    .pick { margin: 14px 0 0; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+    .pick h3 { margin: 0; font-size: 18px; }
+    .score { color: var(--accent); font-weight: 900; font-size: 28px; }
+    .probs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 16px 14px; }
+    .prob { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 9px; }
+    .prob span { display: block; font-size: 12px; color: var(--muted); }
+    .prob b { font-size: 18px; }
+    .why { border-top: 1px solid var(--line); padding: 13px 16px 16px; color: var(--muted); line-height: 1.5; font-size: 14px; }
+    .ai-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 12px 16px; background: #fffaf0; }
+    .ai-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ai-bar button { background: var(--accent); color: #fff; border-color: transparent; min-width: 86px; }
+    .ai-bar button.secondary { background: #fff; color: var(--ink); border-color: var(--line); }
+    .ai-bar button:disabled { opacity: .65; cursor: wait; }
+    .ai-status { font-size: 12px; color: var(--muted); text-align: right; line-height: 1.35; }
+    .ai-summary { display: none; border-top: 1px solid var(--line); padding: 11px 16px; background: #fff; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .ai-summary.show { display: block; }
+    .ai-result { display: none; border-top: 1px solid var(--line); padding: 16px; background: #fff; line-height: 1.6; font-size: 14px; }
+    .ai-result.show { display: block; }
+    .ai-result pre { white-space: pre-wrap; margin: 0; font-family: inherit; color: #3d4743; background: #fbf8ef; border-left: 4px solid var(--accent); border-radius: 8px; padding: 14px; max-height: 520px; overflow: auto; }
+    .history-panel { display: none; border-top: 1px solid var(--line); padding: 14px 16px 16px; background: #fbf8ef; }
+    .history-panel.show { display: block; }
+    .history-item { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 11px 12px; margin-top: 8px; position: relative; }
+    .history-item::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; background: var(--gold); border-radius: 0 3px 3px 0; }
+    .history-item b { display: block; color: var(--ink); margin-bottom: 4px; }
+    .history-item p { margin: 0; color: var(--muted); line-height: 1.45; font-size: 13px; }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .tag { border-radius: 999px; padding: 4px 8px; font-size: 12px; background: #e8efe8; color: #265a43; font-weight: 700; }
+    .tag.market { background: #f4ead1; color: #7a5410; }
+    .tag.risk { background: #f1dddd; color: #8d2c24; }
+    .sources { margin-top: 24px; padding: 18px; }
+    .sources h2 { margin: 0 0 8px; color: var(--ink); font-size: 22px; }
+    .sources a { color: var(--blue); }
+    .sim-panel { background: #fffaf0; border: 1px solid var(--line); border-radius: 8px; padding: 0; margin: 0 0 18px; overflow: hidden; }
+    .sim-panel h2 { margin: 0; font-size: 22px; }
+    .sim-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }
+    .sim-head p { margin: 4px 0 0; color: var(--muted); line-height: 1.45; font-size: 14px; }
+    .sim-badge { display: inline-flex; align-items: center; min-height: 28px; border: 1px solid rgba(19,121,91,.22); background: #e8efe8; color: #265a43; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .sim-body { padding: 14px 18px 16px; }
+    .sim-controls { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+    .sim-control { min-height: 68px; display: grid; grid-template-rows: 18px 40px; gap: 5px; }
+    .sim-control label { display: flex; align-items: center; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 18px; }
+    .sim-control input, .sim-control select { width: 100%; height: 40px; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); padding: 0 10px; font: inherit; line-height: 40px; appearance: none; }
+    .sim-control select { background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 17px, calc(100% - 11px) 17px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+    .sim-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+    .sim-metric { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; }
+    .sim-metric span { display: block; color: var(--muted); font-size: 12px; }
+    .sim-metric b { display: block; margin-top: 2px; font-size: 20px; line-height: 1.15; }
+    .sim-account { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+    .sim-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .sim-actions .primary { background: var(--accent); color: #fff; border-color: transparent; }
+    .sim-ledger { display: none; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+    .sim-ledger.show { display: block; }
+    .sim-ledger-row { display: grid; grid-template-columns: 1.2fr .8fr .8fr .8fr; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.35; }
+    .sim-ledger-row:first-child { border-top: 0; background: #fbf8ef; color: var(--ink); font-weight: 800; }
+    .sim-ledger-row b { color: var(--ink); }
+    .llm-history { display: none; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+    .llm-history.show { display: block; }
+    .llm-history-item { padding: 10px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .llm-history-item:first-child { border-top: 0; }
+    .llm-history-item b { display: block; color: var(--ink); margin-bottom: 3px; }
+    .sim-line { border-top: 1px solid var(--line); background: #fbf8ef; padding: 10px 16px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .sim-line b { color: var(--ink); }
+    .odds-source { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fbf8ef; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .odds-source b { color: var(--ink); }
+    .odds-source-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+    .odds-source button { padding: 7px 10px; background: #fffaf0; }
+    .odds-import { display: none; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0 0; }
+    .odds-import.show { display: block; }
+    .odds-import textarea { width: 100%; min-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .odds-import-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+    .jump-sim { background: var(--accent); color: #fff; border-color: transparent; }
+    .odds-trend { border-top: 1px solid var(--line); background: #fffaf0; padding: 12px 16px 14px; }
+    .odds-trend-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .odds-trend-head b { font-size: 13px; }
+    .odds-trend-head span { color: var(--muted); font-size: 12px; text-align: right; }
+    .trend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .trend-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 0; }
+    .trend-card span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .trend-card svg { display: block; width: 100%; height: 42px; overflow: visible; }
+    .trend-card .trend-now { color: var(--ink); font-weight: 800; font-size: 13px; margin-top: 4px; }
+    @media (max-width: 860px) {
+      .hero { min-height: 78vh; padding: 28px 18px 40px; }
+      h1 { font-size: clamp(28px, 8vw, 44px); line-height: 1.08; }
+      .hero p { font-size: 16px; line-height: 1.58; }
+      .stats, .grid, .rules, .rule-grid, .sim-controls, .sim-summary, .sim-account { grid-template-columns: 1fr; }
+      .stat { padding: 12px 13px; }
+      .toolbar { align-items: flex-start; flex-direction: column; }
+      .controls, #filters { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+      .controls button, #filters button { flex: 0 0 auto; }
+      .wrap { padding: 22px 16px 42px; }
+      .card-head { align-items: flex-start; flex-direction: column; }
+      .venue { text-align: left; }
+      .match { align-items: stretch; gap: 8px; }
+      .team { flex: 1 1 0; }
+      .team strong { font-size: 20px; overflow-wrap: anywhere; }
+      .vs { align-self: center; font-size: 13px; }
+      .pick { grid-template-columns: 1fr; align-items: start; }
+      .score { font-size: 26px; }
+      .probs { grid-template-columns: 1fr; }
+      .prob { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .prob span { overflow-wrap: anywhere; }
+      .ai-bar { align-items: flex-start; flex-direction: column; }
+      .ai-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .ai-actions button { width: 100%; min-width: 0; }
+      .ai-status { text-align: left; }
+      .sim-head { flex-direction: column; padding: 15px; }
+      .sim-body { padding: 13px 15px 15px; }
+      .sim-badge { align-self: flex-start; }
+      .sim-actions { display: grid; grid-template-columns: 1fr; }
+      .sim-actions button { width: 100%; }
+      .sim-ledger-row { grid-template-columns: 1fr; gap: 3px; }
+      .odds-source { align-items: stretch; flex-direction: column; }
+      .odds-source-actions, .odds-import-actions { display: grid; grid-template-columns: 1fr; }
+      .odds-source button, .odds-import-actions button { width: 100%; }
+      .trend-grid { grid-template-columns: 1fr; }
+      .trend-card { display: grid; grid-template-columns: 76px 1fr 54px; align-items: center; gap: 8px; }
+      .trend-card span, .trend-card .trend-now { margin: 0; }
+      .trend-card svg { height: 34px; }
+      .ai-result pre { max-height: 420px; padding: 12px; }
+      .rule-card { padding: 15px; }
+    }
+    @media (max-width: 420px) {
+      .hero { padding-left: 14px; padding-right: 14px; }
+      .wrap { padding-left: 12px; padding-right: 12px; }
+      h1 { font-size: clamp(25px, 7.8vw, 32px); }
+      .card-head, .teams, .why, .ai-bar, .ai-summary, .ai-result { padding-left: 12px; padding-right: 12px; }
+      .probs { padding-left: 12px; padding-right: 12px; }
+      .team strong { font-size: 18px; }
+      .notice, .rule-card, .sources { font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="eyebrow">2026 年世界杯 · 6 月 11 日至 6 月 17 日赛程窗口</div>
+      <h1>未来几天世界杯赛程预测</h1>
+      <p>覆盖开幕日至 6 月 17 日的 25 场小组赛。预测基于当前公开赛程、盘口隐含概率、球队实力层级、主办国/场地因素与小组赛首战倾向；正式名单、伤病和临场首发尚未完全确定，需赛前更新。</p>
+      <div class="stats">
+        <div class="stat"><b id="statMatches">25</b><span>覆盖比赛</span></div>
+        <div class="stat"><b>7</b><span>覆盖天数</span></div>
+        <div class="stat"><b id="statFavs">0</b><span>非平局预测</span></div>
+        <div class="stat"><b>6月10日</b><span>资料快照日期</span></div>
+      </div>
+    </div>
+  </section>
+  <main>
+    <div class="wrap">
+      <div class="toolbar">
+        <h2>比赛卡片</h2>
+        <div class="controls"><button class="jump-sim" type="button" onclick="document.getElementById('simPanel').scrollIntoView({behavior:'smooth', block:'start'})">模拟盘</button><span id="filters"></span></div>
+      </div>
+      <div class="notice">说明：这是赛前预测页面，不是投注建议。静态卡片先用盘口/实力层级作为基础信号；“查看分析”会展开显示 LLM 按双轨背离框架生成的动态判断。页面每 10 分钟自动刷新一次当前比赛列表，时间统一显示为北京时间。</div>
+
+      <section class="sim-panel" id="simPanel" aria-label="模拟盘">
+        <div class="sim-head">
+          <div>
+            <h2>模拟盘</h2>
+            <p>按当前预测概率和盘口计算理论优势、建议仓位和潜在盈利，只用于复盘思路，不构成投注建议。</p>
+          </div>
+          <div class="sim-badge">体彩驱动</div>
+        </div>
+        <div class="sim-body">
+          <div class="sim-controls">
+            <div class="sim-control"><label for="simAccountId">账户 ID</label><input id="simAccountId" type="text" placeholder="自动生成"></div>
+            <div class="sim-control"><label for="bankroll">虚拟本金</label><input id="bankroll" type="number" min="100" step="100" value="10000"></div>
+            <div class="sim-control"><label for="riskMode">仓位模式</label><select id="riskMode"><option value="half">半凯利</option><option value="quarter">四分之一凯利</option><option value="flat">固定 1%</option></select></div>
+            <div class="sim-control"><label for="maxStake">单场上限</label><input id="maxStake" type="number" min="0.5" max="20" step="0.5" value="5"></div>
+            <div class="sim-control"><label for="minEdge">最低优势</label><input id="minEdge" type="number" min="-20" max="50" step="1" value="2"></div>
+          </div>
+          <div class="odds-source" id="oddsSource"><span><b>赔率源：</b>正在读取中国体育彩票竞彩网固定奖金...</span><div class="odds-source-actions"><button type="button" onclick="refreshSportteryOdds()">刷新体彩赔率</button><button type="button" onclick="toggleOddsImport()">导入体彩 JSON</button></div></div>
+          <div class="odds-import" id="oddsImport">
+            <textarea id="oddsImportText" placeholder="粘贴竞彩网 getMatchListV1.qry 返回的 JSON，或代理返回的 { contents: '...' } JSON"></textarea>
+            <div class="odds-import-actions"><button type="button" onclick="applyImportedOdds()">应用导入</button></div>
+          </div>
+          <div class="sim-summary" id="simSummary"></div>
+          <div class="sim-account" id="simAccount"></div>
+          <div class="sim-actions">
+            <button type="button" class="primary" id="autoBetBtn" onclick="llmAutoPlaceBets({manual:true})">立即 LLM 下注</button>
+            <button type="button" onclick="toggleLedger()">查看持仓</button>
+            <button type="button" onclick="toggleLlmHistory()">LLM 历史</button>
+            <button type="button" onclick="resetSimAccount()">清空模拟账户</button>
+          </div>
+          <div class="sim-ledger" id="simLedger"></div>
+          <div class="llm-history" id="llmHistory"></div>
+        </div>
+      </section>
+
+      <section class="rules" aria-label="判断评分规则">
+        <div class="rule-card">
+          <h2>双轨背离评分规则</h2>
+          <div class="rule-grid">
+            <div class="rule-item"><b>基本面轨道 50%</b>球队实力、阵容深度、球员状态、赛程场地、晋级动机和可能轮换共同决定基础胜率。</div>
+            <div class="rule-item"><b>市场/舆情轨道 35%</b>赔率变化、盘口方向、新闻导向和公众热度用于识别市场是否与基本面同向。</div>
+            <div class="rule-item"><b>裁判与比赛控制 15%</b>裁判执法严谨度、红黄牌倾向、点球/VAR风险会影响强弱队节奏、定位球和守平概率。</div>
+            <div class="rule-item"><b>背离修正</b>基本面与市场/新闻同向时提高置信度；若赔率或新闻反向，标记背离并下调置信度。</div>
+          </div>
+        </div>
+        <div class="rule-card">
+          <h3>置信度分档</h3>
+          <p><b>极高：</b>胜率约 75% 以上，强弱和盘口都高度一致。</p>
+          <p><b>高：</b>胜率约 63% 至 74%，热门方优势清晰。</p>
+          <p><b>中高：</b>胜率约 55% 至 62%，倾向明确但有可见冷门路径。</p>
+          <p><b>中：</b>胜率低于约 55% 或平局权重较高，临场信息影响较大。</p>
+        </div>
+      </section>
+
+      <div class="grid" id="cards"></div>
+      <section class="sources">
+        <h2>来源与方法</h2>
+        <p>赛程、场地、转播时间与盘口线参考 ESPN 的世界杯赛程页面；赛程官方来源参考 FIFA 官方赛程/结果页面；球队实力层级参考 FIFA 男足世界排名页面。页面采用静态快照，生成时间为 2026-06-10。</p>
+        <p><a href="https://www.espn.com/soccer/schedule/_/league/fifa.world">ESPN 世界杯赛程</a> · <a href="https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles/match-schedule-fixtures-results-teams-stadiums">FIFA 官方赛程</a> · <a href="https://inside.fifa.com/fifa-world-ranking/men">FIFA 男足世界排名</a></p>
+      </section>
+    </div>
+  </main>
+<script>
+const matches = [
+  {id:1, d:'6月11日', time:'15:00', home:'墨西哥', away:'南非', venue:'阿兹特克体育场', odds:[-315,350,900], pick:'墨西哥', api:'主胜', score:'2-0', conf:'高', probs:[67,22,11], why:'主办国开幕战、市场强烈倾向墨西哥；南非有身体和转换能力，但客场环境和整体深度处劣势。'},
+  {id:2, d:'6月11日', time:'21:00', home:'加拿大', away:'卡塔尔', venue:'BMO 球场', odds:[-205,300,550], pick:'加拿大', api:'主胜', score:'2-1', conf:'中高', probs:[57,25,18], why:'加拿大主场和速度优势明显；卡塔尔杯赛经验好，平局风险存在。'},
+  {id:3, d:'6月12日', time:'12:00', home:'美国', away:'巴拉圭', venue:'SoFi 体育场', odds:[-145,250,360], pick:'美国', api:'主胜', score:'2-1', conf:'中', probs:[48,28,24], why:'美国主场和阵容运动能力占优，但巴拉圭防守韧性强，比赛可能比盘口更胶着。'},
+  {id:4, d:'6月12日', time:'15:00', home:'德国', away:'库拉索', venue:'阿兹特克体育场', odds:[-1050,900,2500], pick:'德国', api:'主胜', score:'4-0', conf:'极高', probs:[84,11,5], why:'实力层级差距极大，德国只要正常轮换也应控制比赛；风险主要是效率而非胜负。'},
+  {id:5, d:'6月12日', time:'18:00', home:'乌拉圭', away:'沙特阿拉伯', venue:'AT&T 体育场', odds:[-370,400,1000], pick:'乌拉圭', api:'主胜', score:'2-0', conf:'高', probs:[69,21,10], why:'乌拉圭压迫、对抗和前场质量优势明确；沙特需要低位防守和反击效率才有机会。'},
+  {id:6, d:'6月12日', time:'21:00', home:'日本', away:'荷兰', venue:'玫瑰碗体育场', odds:[475,290,-190], pick:'荷兰', api:'客胜', score:'1-2', conf:'中', probs:[22,27,51], why:'荷兰个人能力和定位球优势更强；日本技术纪律好，具备制造冷门和平局的条件。'},
+  {id:7, d:'6月13日', time:'12:00', home:'比利时', away:'埃及', venue:'吉列体育场', odds:[-230,320,650], pick:'比利时', api:'主胜', score:'2-1', conf:'中高', probs:[59,25,16], why:'比利时中前场创造力更好；埃及若核心球员状态在线，反击会提高不确定性。'},
+  {id:8, d:'6月13日', time:'15:00', home:'瑞士', away:'奥地利', venue:'李维斯体育场', odds:[170,205,165], pick:'平局', api:'平局', score:'1-1', conf:'中', probs:[34,32,34], why:'两队实力接近、盘口也接近均势；小组首战保守倾向提升平局概率。'},
+  {id:9, d:'6月13日', time:'18:00', home:'法国', away:'塞内加尔', venue:'大都会人寿体育场', odds:[-345,400,850], pick:'法国', api:'主胜', score:'2-0', conf:'高', probs:[68,21,11], why:'法国阵容厚度和速度冲击优势突出；塞内加尔身体条件好，但需要限制法国转换空间。'},
+  {id:10, d:'6月13日', time:'21:00', home:'阿根廷', away:'阿尔及利亚', venue:'箭头体育场', odds:[-500,550,1200], pick:'阿根廷', api:'主胜', score:'2-0', conf:'高', probs:[74,17,9], why:'阿根廷控球、比赛管理和关键球能力更稳；阿尔及利亚的机会在于定位球和反击。'},
+  {id:11, d:'6月14日', time:'12:00', home:'意大利', away:'澳大利亚', venue:'林肯金融球场', odds:[-230,320,650], pick:'意大利', api:'主胜', score:'1-0', conf:'中高', probs:[58,27,15], why:'意大利防守结构和技术质量更好；澳大利亚对抗强，低比分概率较高。'},
+  {id:12, d:'6月14日', time:'15:00', home:'挪威', away:'加纳', venue:'NRG 体育场', odds:[115,220,240], pick:'挪威', api:'主胜', score:'2-1', conf:'中', probs:[41,29,30], why:'盘口略偏挪威，锋线终结能力是关键；加纳身体和反击会让比赛开放。'},
+  {id:13, d:'6月14日', time:'18:00', home:'葡萄牙', away:'乌兹别克斯坦', venue:'硬石体育场', odds:[-600,600,1500], pick:'葡萄牙', api:'主胜', score:'3-0', conf:'极高', probs:[78,15,7], why:'葡萄牙阵容深度和进攻选择明显高一档；乌兹别克斯坦需要极高防守执行力。'},
+  {id:14, d:'6月14日', time:'21:00', home:'摩洛哥', away:'海地', venue:'梅赛德斯-奔驰体育场', odds:[-300,360,850], pick:'摩洛哥', api:'主胜', score:'2-0', conf:'高', probs:[66,23,11], why:'摩洛哥近年大赛稳定性和防守质量强；海地需要依靠速度和混战机会。'},
+  {id:15, d:'6月15日', time:'12:00', home:'英格兰', away:'克罗地亚', venue:'AT&T 体育场', odds:[-160,280,390], pick:'英格兰', api:'主胜', score:'2-1', conf:'中', probs:[50,28,22], why:'英格兰阵容厚度与前场个人能力更强；克罗地亚大赛经验会压低胜率差距。'},
+  {id:16, d:'6月15日', time:'15:00', home:'丹麦', away:'突尼斯', venue:'大都会人寿体育场', odds:[-175,275,450], pick:'丹麦', api:'主胜', score:'1-0', conf:'中', probs:[52,29,19], why:'丹麦组织和定位球更可靠；突尼斯防守纪律好，低比分和平局风险存在。'},
+  {id:17, d:'6月15日', time:'18:00', home:'苏格兰', away:'科特迪瓦', venue:'吉列体育场', odds:[210,220,125], pick:'科特迪瓦', api:'客胜', score:'1-2', conf:'中', probs:[28,29,43], why:'科特迪瓦身体和前场冲击更强；苏格兰定位球和对抗能制造拉锯。'},
+  {id:18, d:'6月15日', time:'21:00', home:'巴西', away:'阿联酋', venue:'SoFi 体育场', odds:[-850,800,2200], pick:'巴西', api:'主胜', score:'3-0', conf:'极高', probs:[82,12,6], why:'巴西个人能力、边路爆点和压制力明显领先；主要看能否早进球降低意外。'},
+  {id:19, d:'6月16日', time:'12:00', home:'西班牙', away:'佛得角', venue:'BC Place 体育场', odds:[-800,700,2000], pick:'西班牙', api:'主胜', score:'3-0', conf:'极高', probs:[81,13,6], why:'西班牙控球压迫和整体技术优势巨大；佛得角需要极高反击效率。'},
+  {id:20, d:'6月16日', time:'15:00', home:'塞尔维亚', away:'新西兰', venue:'BMO 球场', odds:[-290,350,750], pick:'塞尔维亚', api:'主胜', score:'2-0', conf:'高', probs:[64,24,12], why:'塞尔维亚身体、定位球和锋线高度优势明显；新西兰要依赖防守阵型完整度。'},
+  {id:21, d:'6月16日', time:'18:00', home:'哥伦比亚', away:'北马其顿', venue:'李维斯体育场', odds:[-290,350,750], pick:'哥伦比亚', api:'主胜', score:'2-0', conf:'高', probs:[64,24,12], why:'哥伦比亚技术和转换速度更强；北马其顿若守住前 60 分钟可提高平局机会。'},
+  {id:22, d:'6月16日', time:'21:00', home:'伊朗', away:'牙买加', venue:'阿克伦体育场', odds:[-130,245,340], pick:'伊朗', api:'主胜', score:'1-0', conf:'中', probs:[46,30,24], why:'伊朗防守组织和大赛经验略优；牙买加速度威胁让结果不算稳。'},
+  {id:23, d:'6月17日', time:'12:00', home:'卡塔尔', away:'瑞士', venue:'BMO 球场', odds:[650,320,-240], pick:'瑞士', api:'客胜', score:'0-2', conf:'中高', probs:[16,25,59], why:'瑞士稳定性、身体和中场控制更好；卡塔尔需要把比赛拖成低节奏。'},
+  {id:24, d:'6月17日', time:'15:00', home:'墨西哥', away:'加拿大', venue:'BC Place 体育场', odds:[115,220,240], pick:'墨西哥', api:'主胜', score:'2-1', conf:'中', probs:[41,29,30], why:'盘口微妙但墨西哥大赛经验和开局动能略占优；加拿大主场因素和速度让这场接近五五开。'},
+  {id:25, d:'6月17日', time:'18:00', home:'塞内加尔', away:'荷兰', venue:'大都会人寿体育场', odds:[425,290,-175], pick:'荷兰', api:'客胜', score:'1-2', conf:'中', probs:[23,28,49], why:'荷兰整体技术和中后场出球质量略胜；塞内加尔对抗强，若先破门会显著改变走势。'}
+];
+const staticMatches = matches.map(match => ({...match, odds: [...match.odds], probs: [...match.probs]}));
+let dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
+let active = '全部';
+const aiResults = new Map();
+const SIM_ACCOUNT_ID_KEY = 'worldcup-sim-account-id-v1';
+let simAccount = loadSimAccount();
+let llmBetHistory = loadLlmBetHistory();
+let simAccountId = localStorage.getItem(SIM_ACCOUNT_ID_KEY) || '';
+let lastAutoBetSignature = '';
+let llmBetRunning = false;
+for (const match of matches) {
+  match.baseOdds = [...match.odds];
+  match.oddsSource = '静态兜底';
+  match.oddsDecimal = match.odds.map(americanToDecimal);
+}
+function americanToDecimal(odds){
+  return odds < 0 ? 1 + (100 / Math.abs(odds)) : 1 + (odds / 100);
+}
+function decimalToAmerican(decimalOdds){
+  if (!decimalOdds || decimalOdds <= 1) return null;
+  return decimalOdds >= 2 ? Math.round((decimalOdds - 1) * 100) : Math.round(-100 / (decimalOdds - 1));
+}
+function cnDate(dateText){
+  const m = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return dateText || '日期待定';
+  return `${Number(m[2])}月${Number(m[3])}日`;
+}
+function probsFromDecimal(decimalOdds){
+  const implied = decimalOdds.map(v => 1 / v);
+  const total = implied.reduce((sum, v) => sum + v, 0) || 1;
+  return implied.map(v => Math.round((v / total) * 100));
+}
+function pickFromProbs(home, away, probs){
+  const max = Math.max(...probs);
+  const idx = probs.indexOf(max);
+  if (idx === 0) return {pick: home, api: '主胜'};
+  if (idx === 1) return {pick: '平局', api: '平局'};
+  return {pick: away, api: '客胜'};
+}
+function confFromProb(prob){
+  if (prob >= 75) return '极高';
+  if (prob >= 63) return '高';
+  if (prob >= 55) return '中高';
+  return '中';
+}
+function scoreFromPick(api){
+  if (api === '主胜') return '2-1';
+  if (api === '客胜') return '1-2';
+  return '1-1';
+}
+function refreshDateFilters(){
+  dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
+  if (!dates.includes(active)) active = '全部';
+}
+function sportteryToMatch(item, idx){
+  const decimal = item.decimal || [];
+  const probs = probsFromDecimal(decimal);
+  const pick = pickFromProbs(item.home, item.away, probs);
+  return {
+    id: `tc-${idx + 1}`,
+    d: cnDate(item.match_time),
+    time: item.match_no || item.match_time || '',
+    home: item.home,
+    away: item.away,
+    venue: `${item.league || '世界杯'} · 中国体育彩票`,
+    odds: item.american || decimal.map(decimalToAmerican),
+    oddsDecimal: decimal,
+    oddsSource: '中国体育彩票竞彩网固定奖金',
+    pick: pick.pick,
+    api: pick.api,
+    score: scoreFromPick(pick.api),
+    conf: confFromProb(Math.max(...probs)),
+    probs,
+    why: `以中国体育彩票竞彩网当前固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
+  };
+}
+function oddsLabel(odds){
+  if (odds === null || odds === undefined) return '-';
+  return odds > 0 ? `+${odds}` : String(odds);
+}
+function impliedPercent(odds){
+  const decimal = americanToDecimal(odds);
+  return Math.round((1 / decimal) * 1000) / 10;
+}
+function simulatedOddsSeries(match, idx){
+  const current = match.odds[idx];
+  const sign = idx === pickIndex(match) ? -1 : 1;
+  const spread = 12 + ((match.id + idx * 7) % 18);
+  return [
+    current + sign * spread,
+    current + sign * Math.round(spread * 0.45),
+    current
+  ];
+}
+function renderSparkline(values, color){
+  const probs = values.map(impliedPercent);
+  const min = Math.min(...probs);
+  const max = Math.max(...probs);
+  const range = Math.max(1, max - min);
+  const points = probs.map((p, i) => {
+    const x = 4 + i * 46;
+    const y = 34 - ((p - min) / range) * 26;
+    return `${x},${y}`;
+  }).join(' ');
+  return `<svg viewBox="0 0 100 42" aria-hidden="true"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline><circle cx="96" cy="${points.split(' ').at(-1).split(',')[1]}" r="3.5" fill="${color}"></circle></svg>`;
+}
+function renderOddsTrend(match){
+  const labels = [`${match.home}胜`, '平局', `${match.away}胜`];
+  const colors = ['#13795b', '#b8871e', '#2366a8'];
+  const isSporttery = match.oddsSource === '中国体育彩票竞彩网固定奖金';
+  return `
+    <div class="odds-trend">
+      <div class="odds-trend-head"><b>赔率走势</b><span>${isSporttery ? '体彩固定奖金：当前值，走势暂用近似线' : '静态兜底：开盘 / 昨日 / 当前为模拟走势'}</span></div>
+      <div class="trend-grid">
+        ${labels.map((label, idx) => {
+          const series = simulatedOddsSeries(match, idx);
+          return `<div class="trend-card"><span>${label}</span>${renderSparkline(series, colors[idx])}<div class="trend-now">${oddsLabel(series[2])} · ${impliedPercent(series[2])}%</div></div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+function normalizeTeamName(name){
+  return String(name || '').replace(/\s+/g, '').replace(/队$/, '');
+}
+function findSportteryMatch(item){
+  const home = normalizeTeamName(item.home);
+  const away = normalizeTeamName(item.away);
+  return matches.find(match => {
+    const mh = normalizeTeamName(match.home);
+    const ma = normalizeTeamName(match.away);
+    return (home.includes(mh) || mh.includes(home)) && (away.includes(ma) || ma.includes(away));
+  });
+}
+function walkJson(value, out=[]){
+  if (Array.isArray(value)) {
+    for (const child of value) walkJson(child, out);
+  } else if (value && typeof value === 'object') {
+    out.push(value);
+    for (const child of Object.values(value)) walkJson(child, out);
+  }
+  return out;
+}
+function sportteryPick(row, keys){
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== '') return row[key];
+  }
+  return null;
+}
+function normalizeSportteryDecimal(value){
+  if (value === undefined || value === null) return null;
+  const n = Number(String(value).trim());
+  return Number.isFinite(n) && n > 1 ? n : null;
+}
+function parseSportteryPayload(payload){
+  if (payload && typeof payload.contents === 'string') {
+    try { payload = JSON.parse(payload.contents); } catch {}
+  }
+  if (payload && typeof payload.body === 'string') {
+    try { payload = JSON.parse(payload.body); } catch {}
+  }
+  const parsed = [];
+  for (const row of walkJson(payload)) {
+    const home = sportteryPick(row, ['homeTeam','homeTeamName','homeTeamAbbName','homeTeamAllName','hostName','homeName','h_cn','home_team']);
+    const away = sportteryPick(row, ['awayTeam','awayTeamName','awayTeamAbbName','awayTeamAllName','guestName','awayName','a_cn','away_team']);
+    if (!home || !away) continue;
+    let had = row.had || row.HAD || row.spf || row.odds || row;
+    if (Array.isArray(row.oddsList)) {
+      const hadItem = row.oddsList.find(item => String(item.poolCode || '').toUpperCase() === 'HAD');
+      if (hadItem) had = hadItem;
+    }
+    if (Array.isArray(had) && had.length) had = had[0];
+    if (!had || typeof had !== 'object') had = row;
+    const win = normalizeSportteryDecimal(sportteryPick(had, ['h','home','win','had_h','h_sp','a']));
+    const draw = normalizeSportteryDecimal(sportteryPick(had, ['d','draw','had_d','d_sp','b']));
+    const lose = normalizeSportteryDecimal(sportteryPick(had, ['a','away','lose','had_a','a_sp','c']));
+    if (!win || !draw || !lose) continue;
+    parsed.push({home: String(home), away: String(away), decimal: [win, draw, lose], source: '中国体育彩票竞彩网固定奖金'});
+  }
+  return parsed;
+}
+function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞彩网固定奖金'){
+  const valid = (items || []).filter(item => Array.isArray(item.decimal) && item.decimal.length >= 3);
+  matches.length = 0;
+  if (valid.length) {
+    valid.forEach((item, idx) => matches.push(sportteryToMatch(item, idx)));
+  } else {
+    staticMatches.forEach(match => matches.push({...match, odds: [...match.odds], probs: [...match.probs]}));
+  }
+  refreshDateFilters();
+  const source = document.getElementById('oddsSource');
+  if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusPrefix}，已切换为体彩售卖列表 ${valid.length} 场。`;
+  renderFilters();
+  render();
+  maybeAutoLlmBet();
+  return valid.length;
+}
+function toggleOddsImport(){
+  document.getElementById('oddsImport')?.classList.toggle('show');
+}
+function applyImportedOdds(){
+  const source = document.getElementById('oddsSource');
+  try {
+    const raw = document.getElementById('oddsImportText')?.value || '';
+    const payload = JSON.parse(raw);
+    const items = Array.isArray(payload.matches) ? payload.matches : parseSportteryPayload(payload);
+    const applied = applySportteryItems(items, '已导入体彩固定奖金');
+    if (!applied && source) source.querySelector('span').innerHTML = '<b>赔率源：</b>已解析导入内容，但没有匹配到当前页面比赛。';
+  } catch (err) {
+    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>导入失败：${err.message}`;
+  }
+}
+async function refreshSportteryOdds(){
+  const source = document.getElementById('oddsSource');
+  if (source) source.querySelector('span').innerHTML = '<b>赔率源：</b>正在读取中国体育彩票竞彩网固定奖金...';
+  try {
+    const res = await fetch('/api/odds');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '请求失败');
+    let applied = 0;
+    if (data.status === 'ok') applied = applySportteryItems(data.matches || []);
+    if (source) {
+      const statusText = data.status === 'ok'
+        ? `已接入中国体育彩票竞彩网固定奖金，已切换为体彩售卖列表 ${applied} 场。`
+        : `体彩源当前不可用：${data.note || data.status || '未知状态'}；可点“导入体彩 JSON”手动导入，页面先使用静态兜底赔率。`;
+      source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusText}`;
+    }
+    if (data.status !== 'ok') render();
+  } catch (err) {
+    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>体彩赔率读取失败：${err.message}；页面继续使用静态兜底赔率。`;
+  }
+}
+function pickIndex(match){
+  if (match.api === '主胜') return 0;
+  if (match.api === '平局') return 1;
+  return 2;
+}
+function kellyFraction(prob, decimalOdds){
+  const b = decimalOdds - 1;
+  if (b <= 0) return 0;
+  return Math.max(0, ((prob * decimalOdds) - 1) / b);
+}
+function readBankrollInput(){
+  return Math.max(0, Number(document.getElementById('bankroll')?.value || 10000));
+}
+function loadSimAccount(){
+  return {initial: 0, cash: 0, bets: []};
+}
+async function loadServerSimState(){
+  const query = simAccountId ? `?account_id=${encodeURIComponent(simAccountId)}` : '';
+  const res = await fetch(`/api/sim/account${query}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '账户读取失败');
+  simAccountId = data.account_id;
+  localStorage.setItem(SIM_ACCOUNT_ID_KEY, simAccountId);
+  const input = document.getElementById('simAccountId');
+  if (input) input.value = simAccountId;
+  simAccount = data.account || {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
+  llmBetHistory = Array.isArray(data.history) ? data.history : [];
+  lastAutoBetSignature = data.last_signature || '';
+  if (simAccount.initial) {
+    const bankroll = document.getElementById('bankroll');
+    if (bankroll) bankroll.value = simAccount.initial;
+  }
+  renderSimulation();
+}
+async function saveSimAccount(){
+  if (!simAccountId) return;
+  try {
+    await fetch('/api/sim/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        account_id: simAccountId,
+        account: simAccount,
+        history: llmBetHistory,
+        last_signature: lastAutoBetSignature
+      })
+    });
+  } catch (err) {
+    const source = document.getElementById('oddsSource');
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户保存失败：${err.message}`;
+  }
+}
+function loadLlmBetHistory(){
+  return [];
+}
+function saveLlmBetHistory(){
+  saveSimAccount();
+}
+function ensureSimAccount(){
+  const inputBankroll = readBankrollInput();
+  if (!simAccount.initial || simAccount.initial !== inputBankroll) {
+    simAccount = {initial: inputBankroll, cash: inputBankroll, bets: []};
+    saveSimAccount();
+  }
+}
+function betKey(match){
+  return `${match.id}:${match.home}-${match.away}:${match.api}`;
+}
+function betKeyForPick(match, pick){
+  return `${match.id}:${match.home}-${match.away}:${pick}`;
+}
+function simulateMatch(match){
+  const bankroll = readBankrollInput();
+  const maxStakePct = Math.max(0, Number(document.getElementById('maxStake')?.value || 5)) / 100;
+  const minEdge = Number(document.getElementById('minEdge')?.value || 2) / 100;
+  const mode = document.getElementById('riskMode')?.value || 'half';
+  const idx = pickIndex(match);
+  const prob = (match.probs[idx] || 0) / 100;
+  const decimalOdds = americanToDecimal(match.odds[idx]);
+  const edge = (prob * decimalOdds) - 1;
+  const rawKelly = kellyFraction(prob, decimalOdds);
+  const multiplier = mode === 'quarter' ? 0.25 : mode === 'flat' ? 0 : 0.5;
+  const stakePct = mode === 'flat' ? (edge >= minEdge ? 0.01 : 0) : Math.min(rawKelly * multiplier, maxStakePct);
+  const stake = edge >= minEdge ? bankroll * stakePct : 0;
+  const profit = stake * (decimalOdds - 1);
+  return { idx, prob, decimalOdds, edge, stakePct, stake, profit };
+}
+function autoPlaceBets(){
+  ensureSimAccount();
+  const candidates = matches.map(match => ({match, sim: simulateMatch(match)}))
+    .filter(item => item.sim.stake > 0)
+    .sort((a, b) => b.sim.edge - a.sim.edge);
+  const existing = new Set(simAccount.bets.map(bet => bet.key));
+  let placed = 0;
+  for (const {match, sim} of candidates) {
+    const key = betKey(match);
+    if (existing.has(key)) continue;
+    const stake = Math.min(Math.round(sim.stake), Math.floor(simAccount.cash));
+    if (stake <= 0) break;
+    simAccount.cash -= stake;
+    simAccount.bets.push({
+      key,
+      id: match.id,
+      match: `${match.home} vs ${match.away}`,
+      pick: match.api,
+      odds: Number(sim.decimalOdds.toFixed(2)),
+      edge: Number((sim.edge * 100).toFixed(1)),
+      stake,
+      potentialProfit: Math.round(stake * (sim.decimalOdds - 1)),
+      placedAt: new Date().toLocaleString('zh-CN', {hour12: false}),
+      status: '待赛'
+    });
+    placed++;
+  }
+  saveSimAccount();
+  renderSimulation();
+  const ledger = document.getElementById('simLedger');
+  if (ledger) ledger.classList.add('show');
+  if (!placed) {
+    const source = document.getElementById('oddsSource');
+    if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>没有新增下注。可能是优势不足、资金不足，或这些比赛已经下过。';
+  }
+}
+function matchById(id){
+  return matches.find(match => String(match.id) === String(id));
+}
+function decimalForPick(match, pick){
+  const idx = pick === '主胜' ? 0 : pick === '平局' ? 1 : 2;
+  return americanToDecimal(match.odds[idx]);
+}
+function oddsSignature(){
+  return matches.map(match => `${match.id}:${match.home}-${match.away}:${(match.odds || []).join('/')}`).join('|');
+}
+function maybeAutoLlmBet(){
+  const signature = oddsSignature();
+  if (!matches.length || !signature || signature === lastAutoBetSignature) return;
+  lastAutoBetSignature = signature;
+  saveSimAccount();
+  llmAutoPlaceBets({manual:false});
+}
+async function llmAutoPlaceBets(options={}){
+  if (llmBetRunning) return;
+  ensureSimAccount();
+  llmBetRunning = true;
+  const btn = document.getElementById('autoBetBtn');
+  const source = document.getElementById('oddsSource');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'LLM 决策中...';
+  }
+  if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>LLM 正在基于体彩赔率生成模拟下注计划...';
+  try {
+    const res = await fetch('/api/auto-bet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        matches,
+        settings: {
+          bankroll: simAccount.initial,
+          cash: simAccount.cash,
+          riskMode: document.getElementById('riskMode')?.value || 'half',
+          maxStakePct: Number(document.getElementById('maxStake')?.value || 5),
+          minEdgePct: Number(document.getElementById('minEdge')?.value || 2)
+        }
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '请求失败');
+    applyLlmBetPlan(data, options);
+  } catch (err) {
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>LLM 自动下注失败：${err.message}；已退回数学规则。`;
+    autoPlaceBets();
+  } finally {
+    llmBetRunning = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '立即 LLM 下注';
+    }
+  }
+}
+function applyLlmBetPlan(plan, options={}){
+  const existing = new Set(simAccount.bets.map(bet => bet.key));
+  let placed = 0;
+  for (const item of plan.bets || []) {
+    const match = matchById(item.id);
+    if (!match || !['主胜','平局','客胜'].includes(item.pick)) continue;
+    const key = betKeyForPick(match, item.pick);
+    if (existing.has(key)) continue;
+    const stake = Math.min(Math.round(Number(item.stake || 0)), Math.floor(simAccount.cash));
+    if (stake <= 0) continue;
+    const decimalOdds = decimalForPick(match, item.pick);
+    simAccount.cash -= stake;
+    simAccount.bets.push({
+      key,
+      id: match.id,
+      match: `${match.home} vs ${match.away}`,
+      pick: item.pick,
+      odds: Number(decimalOdds.toFixed(2)),
+      edge: Number(item.edge_pct || 0),
+      probability: Number(item.probability || 0),
+      stake,
+      potentialProfit: Math.round(stake * (decimalOdds - 1)),
+      reason: item.reason || 'LLM 模拟下注',
+      placedAt: new Date().toLocaleString('zh-CN', {hour12: false}),
+      status: '待赛',
+      agent: 'LLM'
+    });
+    placed++;
+  }
+  saveSimAccount();
+  recordLlmBetPlan(plan, placed, options.manual);
+  renderSimulation();
+  renderLlmHistory();
+  document.getElementById('simLedger')?.classList.add('show');
+  const source = document.getElementById('oddsSource');
+  if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>${plan.summary || 'LLM 已完成模拟下注。'} 新增 ${placed} 单。`;
+}
+function recordLlmBetPlan(plan, placed, manual=false){
+  llmBetHistory.unshift({
+    time: new Date().toLocaleString('zh-CN', {hour12: false}),
+    mode: manual ? '手动触发' : '赔率更新自动触发',
+    summary: plan.summary || '',
+    model: plan.model || '',
+    placed,
+    bets: (plan.bets || []).map(bet => ({
+      id: bet.id,
+      pick: bet.pick,
+      stake: bet.stake,
+      edge_pct: bet.edge_pct,
+      reason: bet.reason
+    }))
+  });
+  llmBetHistory = llmBetHistory.slice(0, 20);
+  saveLlmBetHistory();
+}
+function resetSimAccount(){
+  simAccount = {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
+  saveSimAccount();
+  renderSimulation();
+}
+async function switchSimAccount(){
+  const raw = document.getElementById('simAccountId')?.value || '';
+  simAccountId = raw.trim();
+  localStorage.setItem(SIM_ACCOUNT_ID_KEY, simAccountId);
+  await loadServerSimState();
+}
+function toggleLedger(){
+  document.getElementById('simLedger')?.classList.toggle('show');
+}
+function toggleLlmHistory(){
+  const panel = document.getElementById('llmHistory');
+  if (!panel) return;
+  panel.classList.toggle('show');
+  renderLlmHistory();
+}
+function renderLlmHistory(){
+  const panel = document.getElementById('llmHistory');
+  if (!panel) return;
+  if (!llmBetHistory.length) {
+    panel.innerHTML = '<div class="llm-history-item"><b>暂无 LLM 下注历史</b>赔率加载成功后会自动触发一次 LLM 模拟下注。</div>';
+    return;
+  }
+  panel.innerHTML = llmBetHistory.slice(0, 10).map(item => `
+    <div class="llm-history-item">
+      <b>${item.time} · ${item.mode} · 新增 ${item.placed} 单</b>
+      <div>${item.summary || '无摘要'}${item.model ? ` · ${item.model}` : ''}</div>
+      <div>${(item.bets || []).slice(0, 5).map(bet => `${bet.id} ${bet.pick} ${bet.stake || 0}，优势 ${bet.edge_pct || 0}%`).join('；') || '无下注'}</div>
+    </div>`).join('');
+}
+function renderSimAccount(){
+  ensureSimAccount();
+  const locked = simAccount.bets.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);
+  const potential = simAccount.bets.reduce((sum, bet) => sum + Number(bet.potentialProfit || 0), 0);
+  const account = document.getElementById('simAccount');
+  if (account) {
+    account.innerHTML = `
+      <div class="sim-metric"><span>初始本金</span><b>${Math.round(simAccount.initial)}</b></div>
+      <div class="sim-metric"><span>可用资金</span><b>${Math.round(simAccount.cash)}</b></div>
+      <div class="sim-metric"><span>已投金额</span><b>${Math.round(locked)}</b></div>
+      <div class="sim-metric"><span>潜在盈利</span><b>${Math.round(potential)}</b></div>`;
+  }
+  renderLedger();
+  renderLlmHistory();
+}
+function renderLedger(){
+  const ledger = document.getElementById('simLedger');
+  if (!ledger) return;
+  if (!simAccount.bets.length) {
+    ledger.innerHTML = '<div class="sim-ledger-row"><span>暂无持仓</span><span>点击“启动自动下注”后生成模拟单</span><span></span><span></span></div>';
+    return;
+  }
+  ledger.innerHTML = `
+    <div class="sim-ledger-row"><span>比赛</span><span>选择 / 赔率</span><span>下注 / 盈利</span><span>状态</span></div>
+    ${simAccount.bets.slice().reverse().map(bet => `
+      <div class="sim-ledger-row">
+        <span><b>${bet.match}</b><br>${bet.placedAt}</span>
+        <span>${bet.pick} · ${bet.odds}${bet.agent ? `<br>${bet.agent}` : ''}</span>
+        <span>${bet.stake} / +${bet.potentialProfit}</span>
+        <span>${bet.status}${bet.reason ? `<br>${bet.reason}` : ''}</span>
+      </div>`).join('')}`;
+}
+function renderSimulation(){
+  const visible = active === '全部' ? matches : matches.filter(m => m.d === active);
+  let totalStake = 0, totalProfit = 0, count = 0;
+  for (const match of visible) {
+    const sim = simulateMatch(match);
+    totalStake += sim.stake;
+    totalProfit += sim.profit;
+    if (sim.stake > 0) count++;
+    const el = document.getElementById(`sim-${match.id}`);
+    if (!el) continue;
+    if (sim.stake <= 0) {
+      el.innerHTML = `<b>模拟盘：</b>跳过。模型优势 ${(sim.edge * 100).toFixed(1)}%，低于最低优势门槛。`;
+    } else {
+      el.innerHTML = `<b>模拟盘：</b>${match.api}，赔率 ${sim.decimalOdds.toFixed(2)}，优势 ${(sim.edge * 100).toFixed(1)}%，下注 ${Math.round(sim.stake)}，潜在盈利 ${Math.round(sim.profit)}。`;
+    }
+  }
+  const bankroll = Math.max(0, Number(document.getElementById('bankroll')?.value || 10000));
+  const summary = document.getElementById('simSummary');
+  if (summary) {
+    summary.innerHTML = `
+      <div class="sim-metric"><span>推荐下注场次</span><b>${count}</b></div>
+      <div class="sim-metric"><span>总投入</span><b>${Math.round(totalStake)}</b></div>
+      <div class="sim-metric"><span>理论盈利</span><b>${Math.round(totalProfit)}</b></div>
+      <div class="sim-metric"><span>本金占用</span><b>${bankroll ? ((totalStake / bankroll) * 100).toFixed(1) : '0.0'}%</b></div>`;
+  }
+  renderSimAccount();
+}
+function renderFilters(){
+  refreshDateFilters();
+  const el=document.getElementById('filters');
+  el.innerHTML=dates.map(d=>`<button class="${d===active?'active':''}" data-date="${d}">${d}</button>`).join('');
+  el.querySelectorAll('button').forEach(b=>b.onclick=()=>{active=b.dataset.date; render(); renderFilters();});
+}
+function render(){
+  const list = active==='全部' ? matches : matches.filter(m=>m.d===active);
+  document.getElementById('cards').innerHTML = list.map(m=>`
+    <article class="card">
+      <div class="card-head"><div><div class="date">${m.d} · 美东时间 ${m.time}</div><div class="date">竞猜选项：${m.api}</div></div><div class="venue">${m.venue}<br>${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
+      <div class="teams">
+        <div class="match"><div class="team"><strong>${m.home}</strong><span>主队</span></div><div class="vs">对阵</div><div class="team" style="text-align:right"><strong>${m.away}</strong><span>客队</span></div></div>
+        <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span><span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
+      </div>
+      <div class="probs"><div class="prob"><span>${m.home}胜</span><b>${m.probs[0]}%</b></div><div class="prob"><span>平局</span><b>${m.probs[1]}%</b></div><div class="prob"><span>${m.away}胜</span><b>${m.probs[2]}%</b></div></div>
+      ${renderOddsTrend(m)}
+      <div class="sim-line" id="sim-${m.id}">模拟盘计算中...</div>
+      <div class="why">${m.why}</div>
+      <div class="ai-bar"><div class="ai-actions"><button type="button" data-ai="${m.id}" data-expanded="false">查看分析</button><button type="button" class="secondary" data-history="${m.id}">历史</button></div><span class="ai-status" id="status-${m.id}">等待自动刷新</span></div>
+      <div class="ai-summary" id="summary-${m.id}"></div>
+      <div class="ai-result" id="ai-${m.id}"><pre></pre></div>
+      <div class="history-panel" id="history-${m.id}"></div>
+    </article>`).join('');
+  document.getElementById('statMatches').textContent = matches.length;
+  document.getElementById('statFavs').textContent = matches.filter(m=>m.pick !== '平局').length;
+  document.querySelectorAll('[data-ai]').forEach(btn => {
+    btn.onclick = () => runAiReview(btn.dataset.ai, btn);
+  });
+  document.querySelectorAll('[data-history]').forEach(btn => {
+    btn.onclick = () => toggleHistory(btn.dataset.history, btn);
+  });
+  restoreRenderedAiResults();
+  renderSimulation();
+}
+function restoreRenderedAiResults(){
+  for (const data of aiResults.values()) applyAiResult(data);
+}
+async function toggleHistory(id, button){
+  const panel = document.getElementById(`history-${id}`);
+  if (!panel) return;
+  if (panel.classList.contains('show')) {
+    panel.classList.remove('show');
+    button.textContent = '历史';
+    return;
+  }
+  panel.classList.add('show');
+  button.textContent = '收起历史';
+  panel.innerHTML = '正在查询历史预测...';
+  try {
+    const res = await fetch(`/api/history?match_id=${encodeURIComponent(id)}&limit=5`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '请求失败');
+    const rows = data.history || [];
+    if (!rows.length) {
+      panel.innerHTML = '<div class="history-item"><p>暂无历史预测。等待下一次 AI 自动刷新后会出现记录。</p></div>';
+      return;
+    }
+    panel.innerHTML = rows.map(row => `
+      <div class="history-item">
+        <b>${row.generated_at || ''} · ${row.model || '未知模型'} · 预测比分 ${row.predicted_score || row.static_score || '无'}</b>
+        <p>${row.summary || '无摘要'}</p>
+      </div>`).join('');
+  } catch (err) {
+    panel.innerHTML = `<div class="history-item"><p>历史查询失败：${err.message}</p></div>`;
+  }
+}
+async function runAiReview(id, button){
+  const match = matches.find(m => String(m.id) === String(id));
+  if (!match) return;
+  const box = document.getElementById(`ai-${id}`);
+  if (box && box.querySelector('pre').textContent.trim()) {
+    const isOpen = box.classList.toggle('show');
+    if (button) {
+      button.dataset.expanded = String(isOpen);
+      button.textContent = isOpen ? '收起分析' : '查看分析';
+    }
+    return;
+  }
+  if (button) button.disabled = true;
+  await fetchAndApply(match, button);
+  if (box) box.classList.add('show');
+  if (button) {
+    button.dataset.expanded = 'true';
+    button.textContent = '收起分析';
+  }
+}
+async function fetchAndApply(match, button){
+  const id = match.id;
+  const status = document.getElementById(`status-${id}`);
+  const summary = document.getElementById(`summary-${id}`);
+  const box = document.getElementById(`ai-${id}`);
+  const pre = box.querySelector('pre');
+  status.textContent = '正在刷新 AI 结论...';
+  try {
+    const res = await fetch('/api/predict', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ match })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '请求失败');
+    aiResults.set(data.id, data);
+    applyAiResult(data);
+  } catch (err) {
+    summary.textContent = `无法生成 AI 结论：${err.message}`;
+    summary.classList.add('show');
+    pre.textContent = '';
+    status.textContent = 'AI 刷新失败';
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+function applyAiResult(data){
+  const id = data.id;
+  const status = document.getElementById(`status-${id}`);
+  const summary = document.getElementById(`summary-${id}`);
+  const box = document.getElementById(`ai-${id}`);
+  if (!status || !summary || !box) return;
+  summary.textContent = '';
+  summary.classList.remove('show');
+  box.querySelector('pre').textContent = data.analysis || '';
+  status.textContent = `${data.generated_at || ''}${data.cached ? ' · 缓存' : ''} · ${data.model || '未知模型'}`;
+}
+async function refreshAllAi(){
+  for (const match of matches) {
+    await fetchAndApply(match);
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+}
+renderFilters(); render();
+['bankroll','riskMode','maxStake','minEdge'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', () => {
+    if (id === 'bankroll') {
+      simAccount = {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
+      saveSimAccount();
+    }
+    renderSimulation();
+  });
+  document.getElementById(id)?.addEventListener('change', () => {
+    if (id === 'bankroll') {
+      simAccount = {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
+      saveSimAccount();
+    }
+    renderSimulation();
+  });
+});
+document.getElementById('simAccountId')?.addEventListener('change', switchSimAccount);
+async function boot(){
+  try {
+    await loadServerSimState();
+  } catch (err) {
+    const source = document.getElementById('oddsSource');
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户读取失败：${err.message}`;
+  }
+  refreshSportteryOdds();
+}
+boot();
+setTimeout(refreshAllAi, 3000);
+setInterval(refreshAllAi, 10 * 60 * 1000);
+</script>
+</body>
+</html>
