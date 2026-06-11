@@ -104,6 +104,8 @@
     .sim-head p { margin: 4px 0 0; color: var(--muted); line-height: 1.45; font-size: 14px; }
     .sim-badge { display: inline-flex; align-items: center; min-height: 28px; border: 1px solid rgba(19,121,91,.22); background: #e8efe8; color: #265a43; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 800; white-space: nowrap; }
     .sim-body { padding: 14px 18px 16px; }
+    .sim-panel.collapsed .sim-body { display: none; }
+    .sim-panel.collapsed .sim-head { border-bottom: 0; }
     .sim-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
     .sim-control { min-height: 68px; display: grid; grid-template-rows: 18px 40px; gap: 5px; }
     .sim-control label { display: flex; align-items: center; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 18px; }
@@ -219,11 +221,11 @@
     <div class="wrap">
       <div class="toolbar">
         <h2>比赛卡片</h2>
-        <div class="controls"><button class="jump-sim" type="button" onclick="document.getElementById('simPanel').scrollIntoView({behavior:'smooth', block:'start'})">模拟盘</button><span id="filters"></span></div>
+        <div class="controls"><button class="jump-sim" id="simToggleBtn" type="button" onclick="toggleSimPanel()">模拟盘</button><span id="filters"></span></div>
       </div>
       <div class="notice">说明：这是赛前预测页面，不是投注建议。静态卡片先用盘口/实力层级作为基础信号；“查看分析”会展开显示 LLM 按双轨背离框架生成的动态判断。页面每 10 分钟自动刷新一次当前比赛列表，时间统一显示为北京时间。</div>
 
-      <section class="sim-panel" id="simPanel" aria-label="模拟盘">
+      <section class="sim-panel collapsed" id="simPanel" aria-label="模拟盘">
         <div class="sim-head">
           <div>
             <h2>模拟盘</h2>
@@ -1139,6 +1141,14 @@ async function refreshAllAi(){
     await new Promise(resolve => setTimeout(resolve, 250));
   }
 }
+function toggleSimPanel(){
+  const panel = document.getElementById('simPanel');
+  const button = document.getElementById('simToggleBtn');
+  if (!panel) return;
+  const collapsed = panel.classList.toggle('collapsed');
+  if (button) button.textContent = collapsed ? '模拟盘' : '收起模拟盘';
+  if (!collapsed) panel.scrollIntoView({behavior:'smooth', block:'start'});
+}
 renderFilters(); render();
 ['bankroll','riskMode','maxStake','minEdge'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', () => {
@@ -1159,8 +1169,6 @@ renderFilters(); render();
 async function boot(){
   try {
     await loadServerSimState();
-    document.getElementById('simLedger')?.classList.add('show');
-    document.getElementById('llmHistory')?.classList.add('show');
     renderPostReviews();
   } catch (err) {
     const source = document.getElementById('oddsSource');
