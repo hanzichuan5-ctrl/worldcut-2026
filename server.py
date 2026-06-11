@@ -295,6 +295,9 @@ def default_sim_state(account_id: str) -> dict:
         "account_id": account_id,
         "account": {"initial": 10000, "cash": 10000, "bets": []},
         "history": [],
+        "post_reviews": [],
+        "stats": {},
+        "settlement": {},
         "last_signature": "",
         "updated_at": beijing_time(),
     }
@@ -321,10 +324,14 @@ def save_sim_state(state: dict) -> dict:
     account_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(state.get("account_id") or ""))[:48] or uuid.uuid4().hex[:12]
     account = state.get("account") if isinstance(state.get("account"), dict) else {"initial": 10000, "cash": 10000, "bets": []}
     history = state.get("history") if isinstance(state.get("history"), list) else []
+    post_reviews = state.get("post_reviews") if isinstance(state.get("post_reviews"), list) else []
     safe_state = {
         "account_id": account_id,
         "account": account,
         "history": history[:50],
+        "post_reviews": post_reviews[:100],
+        "stats": state.get("stats") if isinstance(state.get("stats"), dict) else calculate_sim_stats(account),
+        "settlement": state.get("settlement") if isinstance(state.get("settlement"), dict) else {},
         "last_signature": str(state.get("last_signature") or "")[:8000],
         "updated_at": beijing_time(),
     }
@@ -406,6 +413,101 @@ def match_result_for_bet(bet: dict, results: dict) -> dict | None:
     return None
 
 
+def calculate_sim_stats(account: dict) -> dict:
+    bets = account.get("bets") if isinstance(account.get("bets"), list) else []
+    settled = [bet for bet in bets if bet.get("status") in ("已中", "未中")]
+    pending = [bet for bet in bets if bet.get("status") not in ("已中", "未中", "已取消")]
+    won = [bet for bet in settled if bet.get("status") == "已中"]
+    singles = [bet for bet in bets if bet.get("type") != "parlay"]
+    parlays = [bet for bet in bets if bet.get("type") == "parlay"]
+    settled_stake = sum(float(bet.get("stake") or 0) for bet in settled)
+    pending_stake = sum(float(bet.get("stake") or 0) for bet in pending)
+    realized = sum(float(bet.get("settledProfit") or 0) for bet in settled)
+    total_stake = sum(float(bet.get("stake") or 0) for bet in bets)
+    initial = float(account.get("initial") or 0)
+    cash = float(account.get("cash") or 0)
+    return {
+        "initial": round(initial),
+        "cash": round(cash),
+        "total_bets": len(bets),
+        "pending_bets": len(pending),
+        "settled_bets": len(settled),
+        "won_bets": len(won),
+        "lost_bets": len(settled) - len(won),
+        "single_bets": len(singles),
+        "parlay_bets": len(parlays),
+        "pending_stake": round(pending_stake),
+        "total_stake": round(total_stake),
+        "settled_stake": round(settled_stake),
+        "realized_profit": round(realized),
+        "equity": round(cash + pending_stake),
+        "win_rate": round((len(won) / len(settled)) * 100, 1) if settled else 0,
+        "roi": round((realized / settled_stake) * 100, 1) if settled_stake else 0,
+    }
+
+
+def bet_review_key(bet: dict) -> str:
+    return str(bet.get("key") or bet.get("id") or bet.get("match") or "")
+
+
+def build_rule_based_post_review(bet: dict, history: list[dict]) -> dict:
+    matched_history = None
+    bet_ids = {str(bet.get("id"))}
+    if bet.get("type") == "parlay":
+        bet_ids = {str(leg.get("id")) for leg in bet.get("legs", []) if leg.get("id") is not None}
+    for item in history:
+        decision_ids = {str(decision.get("id")) for decision in item.get("decisions", []) if decision.get("id") is not None}
+        if bet_ids & decision_ids:
+            matched_history = item
+            break
+    status = bet.get("status")
+    hit_text = "命中" if status == "已中" else "未命中"
+    profit = round(float(bet.get("settledProfit") or 0))
+    reason = bet.get("reason") or "原始下注理由未记录。"
+    mode = matched_history.get("planMode") if matched_history else ""
+    summary = f"{hit_text}，已实现盈亏 {profit}。"
+    if bet.get("type") == "parlay":
+        legs = bet.get("legResults") or []
+        detail = "；".join(f"{leg.get('match')} 选{leg.get('pick')}，赛果{leg.get('result')}，实际{leg.get('actual')}" for leg in legs) or "串关分项赛果暂缺。"
+        lesson = "串关需要全部条件同时成立，后续应降低相关性不明的多关组合仓位。"
+    else:
+        detail = f"{bet.get('match')} 选择{bet.get('pick')}，赛果{bet.get('result', '未记录')}。"
+        lesson = "后续应复核赛前概率、赔率水位和临场阵容新闻是否被高估或低估。"
+    return {
+        "key": bet_review_key(bet),
+        "time": beijing_time(),
+        "match": bet.get("match"),
+        "type": "串关" if bet.get("type") == "parlay" else "单关",
+        "status": status,
+        "stake": bet.get("stake"),
+        "odds": bet.get("odds"),
+        "profit": profit,
+        "summary": summary,
+        "detail": f"下注理由：{reason} {detail}",
+        "lesson": f"下注模式：{mode or bet.get('pick') or '未记录'}。{lesson}",
+        "model": "rule-review",
+    }
+
+
+def generate_missing_post_reviews(state: dict) -> int:
+    account = state.get("account") if isinstance(state.get("account"), dict) else {}
+    history = state.get("history") if isinstance(state.get("history"), list) else []
+    post_reviews = state.get("post_reviews") if isinstance(state.get("post_reviews"), list) else []
+    existing = {str(item.get("key")) for item in post_reviews}
+    added = 0
+    for bet in account.get("bets", []) if isinstance(account.get("bets"), list) else []:
+        if bet.get("status") not in ("已中", "未中"):
+            continue
+        key = bet_review_key(bet)
+        if not key or key in existing:
+            continue
+        post_reviews.insert(0, build_rule_based_post_review(bet, history))
+        existing.add(key)
+        added += 1
+    state["post_reviews"] = post_reviews[:100]
+    return added
+
+
 def settle_single_bet(bet: dict, result: dict, account: dict) -> bool:
     bet["result"] = f"{result['home_score']}-{result['away_score']}"
     if result["pick"] == bet.get("pick"):
@@ -470,15 +572,37 @@ def settle_sim_account(account_id: str | None) -> dict:
         if settle_single_bet(bet, result, account):
             changed += 1
     state["account"] = account
-    if changed:
-        save_sim_state(state)
+    state["stats"] = calculate_sim_stats(account)
+    state["settlement"] = {
+        "last_checked_at": beijing_time(),
+        "last_settled": changed,
+        "results_count": len(results),
+        "source": "worldcup26.ir",
+    }
+    reviews_added = generate_missing_post_reviews(state)
+    save_sim_state(state)
     return {
         "account_id": state.get("account_id"),
         "settled": changed,
+        "reviews_added": reviews_added,
         "results_count": len(results),
         "account": account,
+        "history": state.get("history", []),
+        "post_reviews": state.get("post_reviews", []),
+        "stats": state.get("stats", {}),
+        "settlement": state.get("settlement", {}),
         "updated_at": beijing_time(),
     }
+
+
+def get_sim_snapshot(account_id: str | None, auto_settle: bool = True) -> dict:
+    if auto_settle:
+        return settle_sim_account(account_id or "global")
+    state = get_sim_state(account_id or "global")
+    state["stats"] = calculate_sim_stats(state.get("account") or {})
+    generate_missing_post_reviews(state)
+    save_sim_state(state)
+    return state
 
 
 def summarize_analysis(text: str) -> str:
@@ -1066,7 +1190,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/sim/account":
             params = parse.parse_qs(parsed.query)
-            json_response(self, 200, get_sim_state(params.get("account_id", [""])[0]))
+            auto_settle = params.get("settle", ["1"])[0] != "0"
+            json_response(self, 200, get_sim_snapshot(params.get("account_id", ["global"])[0], auto_settle=auto_settle))
             return
         if parsed.path == "/api/sim/settle":
             params = parse.parse_qs(parsed.query)

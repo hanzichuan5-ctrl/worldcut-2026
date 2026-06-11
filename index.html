@@ -116,6 +116,8 @@
     .sim-account { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
     .sim-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .sim-actions .primary { background: var(--accent); color: #fff; border-color: transparent; }
+    .sim-db-status { margin-top: 10px; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 10px 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .sim-db-status b { color: var(--ink); }
     .sim-ledger { display: none; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
     .sim-ledger.show { display: block; }
     .sim-ledger-row { display: grid; grid-template-columns: 1.2fr .8fr .8fr .8fr; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.35; }
@@ -126,6 +128,7 @@
     .llm-history-item { padding: 10px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.45; }
     .llm-history-item:first-child { border-top: 0; }
     .llm-history-item b { display: block; color: var(--ink); margin-bottom: 3px; }
+    .post-review { display: block; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
     .sim-line { border-top: 1px solid var(--line); background: #fbf8ef; padding: 10px 16px; color: var(--muted); font-size: 13px; line-height: 1.45; }
     .sim-line b { color: var(--ink); }
     .odds-source { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fbf8ef; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -242,6 +245,7 @@
           </div>
           <div class="sim-summary" id="simSummary"></div>
           <div class="sim-account" id="simAccount"></div>
+          <div class="sim-db-status" id="simDbStatus"><b>数据库：</b>正在读取统一账户、持仓、历史下注和赛后复盘...</div>
           <div class="sim-actions">
             <button type="button" class="primary" id="autoBetBtn" onclick="llmAutoPlaceBets({manual:true})">立即 LLM 下注</button>
             <button type="button" onclick="toggleLedger()">查看持仓</button>
@@ -251,6 +255,7 @@
           </div>
           <div class="sim-ledger" id="simLedger"></div>
           <div class="llm-history" id="llmHistory"></div>
+          <div class="post-review" id="postReview"></div>
         </div>
       </section>
 
@@ -317,6 +322,9 @@ const GLOBAL_SIM_ACCOUNT_ID = 'global';
 const AUTO_BET_STRATEGY_VERSION = 'research-v3';
 let simAccount = loadSimAccount();
 let llmBetHistory = loadLlmBetHistory();
+let postReviews = [];
+let simStats = {};
+let settlementInfo = {};
 let simAccountId = GLOBAL_SIM_ACCOUNT_ID;
 let lastAutoBetSignature = '';
 let llmBetRunning = false;
@@ -575,11 +583,15 @@ async function loadServerSimState(){
   simAccountId = GLOBAL_SIM_ACCOUNT_ID;
   simAccount = data.account || {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
   llmBetHistory = Array.isArray(data.history) ? data.history : [];
+  postReviews = Array.isArray(data.post_reviews) ? data.post_reviews : [];
+  simStats = data.stats || {};
+  settlementInfo = data.settlement || {};
   lastAutoBetSignature = data.last_signature || '';
   if (simAccount.initial) {
     const bankroll = document.getElementById('bankroll');
     if (bankroll) bankroll.value = simAccount.initial;
   }
+  updateDbStatus(data);
   renderSimulation();
 }
 async function saveSimAccount(){
@@ -592,6 +604,9 @@ async function saveSimAccount(){
         account_id: simAccountId,
         account: simAccount,
         history: llmBetHistory,
+        post_reviews: postReviews,
+        stats: simStats,
+        settlement: settlementInfo,
         last_signature: lastAutoBetSignature
       })
     });
@@ -600,18 +615,43 @@ async function saveSimAccount(){
     if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户保存失败：${err.message}`;
   }
 }
+function updateDbStatus(data={}){
+  const el = document.getElementById('simDbStatus');
+  if (!el) return;
+  const stats = data.stats || simStats || {};
+  const settlement = data.settlement || settlementInfo || {};
+  const checked = settlement.last_checked_at || data.updated_at || '刚刚';
+  el.innerHTML = `<b>数据库：</b>已加载统一账户 global。持仓 ${stats.total_bets || 0} 单，待结算 ${stats.pending_bets || 0} 单，已结算 ${stats.settled_bets || 0} 单，赛后复盘 ${postReviews.length || 0} 条。最近结算检查：${checked}。`;
+}
 function loadLlmBetHistory(){
   return [];
 }
 function saveLlmBetHistory(){
   saveSimAccount();
 }
+function calculateLocalStats(){
+  const bets = Array.isArray(simAccount.bets) ? simAccount.bets : [];
+  const settled = bets.filter(bet => ['已中','未中'].includes(bet.status));
+  const pending = bets.filter(bet => !['已中','未中','已取消'].includes(bet.status));
+  const won = settled.filter(bet => bet.status === '已中');
+  const settledStake = settled.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);
+  const pendingStake = pending.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);
+  const realized = settled.reduce((sum, bet) => sum + Number(bet.settledProfit || 0), 0);
+  return {
+    total_bets: bets.length,
+    pending_bets: pending.length,
+    settled_bets: settled.length,
+    single_bets: bets.filter(bet => bet.type !== 'parlay').length,
+    parlay_bets: bets.filter(bet => bet.type === 'parlay').length,
+    pending_stake: Math.round(pendingStake),
+    realized_profit: Math.round(realized),
+    win_rate: settled.length ? ((won.length / settled.length) * 100).toFixed(1) : 0,
+    roi: settledStake ? ((realized / settledStake) * 100).toFixed(1) : 0
+  };
+}
 function ensureSimAccount(){
   const inputBankroll = readBankrollInput();
-  if (!simAccount.initial || simAccount.initial !== inputBankroll) {
-    simAccount = {initial: inputBankroll, cash: inputBankroll, bets: []};
-    saveSimAccount();
-  }
+  if (!simAccount.initial) simAccount = {initial: inputBankroll, cash: inputBankroll, bets: []};
 }
 function betKey(match){
   return `${match.id}:${match.home}-${match.away}:${match.api}`;
@@ -758,6 +798,7 @@ function applyLlmBetPlan(plan, options={}){
   }
   recordLlmBetPlan(plan, placed, options.manual);
   if (options.signature) lastAutoBetSignature = options.signature;
+  simStats = calculateLocalStats();
   saveSimAccount();
   renderSimulation();
   renderLlmHistory();
@@ -788,6 +829,9 @@ function recordLlmBetPlan(plan, placed, manual=false){
 }
 function resetSimAccount(){
   simAccount = {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
+  postReviews = [];
+  simStats = calculateLocalStats();
+  settlementInfo = {};
   saveSimAccount();
   renderSimulation();
 }
@@ -808,10 +852,15 @@ async function settleSimAccount(){
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '结算失败');
     simAccount = data.account || simAccount;
-    await saveSimAccount();
+    llmBetHistory = Array.isArray(data.history) ? data.history : llmBetHistory;
+    postReviews = Array.isArray(data.post_reviews) ? data.post_reviews : postReviews;
+    simStats = data.stats || simStats;
+    settlementInfo = data.settlement || settlementInfo;
     renderSimulation();
     document.getElementById('simLedger')?.classList.add('show');
-    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>本次结算 ${data.settled || 0} 单，赛果源 ${data.results_count || 0} 场。`;
+    document.getElementById('llmHistory')?.classList.add('show');
+    updateDbStatus(data);
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>本次结算 ${data.settled || 0} 单，新增复盘 ${data.reviews_added || 0} 条，赛果源 ${data.results_count || 0} 场。`;
   } catch (err) {
     if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>结算失败：${err.message}`;
   }
@@ -832,20 +881,43 @@ function renderLlmHistory(){
       <div>${(item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.pick}：${decision.reason || '无理由'}`).join('；')}</div>
     </div>`).join('');
 }
+function renderPostReviews(){
+  const panel = document.getElementById('postReview');
+  if (!panel) return;
+  if (!postReviews.length) {
+    panel.innerHTML = '<div class="llm-history-item"><b>暂无赛后复盘</b>已结算持仓会在这里自动生成复盘，数据写入数据库。</div>';
+    return;
+  }
+  panel.innerHTML = postReviews.slice(0, 8).map(item => `
+    <div class="llm-history-item">
+      <b>${item.time || ''} · ${item.type || '模拟单'} · ${item.status || ''} · 盈亏 ${item.profit || 0}</b>
+      <div>${item.match || ''} · 下注 ${item.stake || 0} · 赔率 ${item.odds || '-'}</div>
+      <div>${item.summary || ''}</div>
+      <div>${item.detail || ''}</div>
+      <div>${item.lesson || ''}</div>
+    </div>`).join('');
+}
 function renderSimAccount(){
   ensureSimAccount();
   const locked = simAccount.bets.reduce((sum, bet) => ['已中','未中','已取消'].includes(bet.status) ? sum : sum + Number(bet.stake || 0), 0);
   const realized = simAccount.bets.reduce((sum, bet) => sum + Number(bet.settledProfit || 0), 0);
+  const stats = Object.keys(simStats || {}).length ? simStats : calculateLocalStats();
   const account = document.getElementById('simAccount');
   if (account) {
     account.innerHTML = `
       <div class="sim-metric"><span>初始本金</span><b>${Math.round(simAccount.initial)}</b></div>
       <div class="sim-metric"><span>可用资金</span><b>${Math.round(simAccount.cash)}</b></div>
-      <div class="sim-metric"><span>已投金额</span><b>${Math.round(locked)}</b></div>
-      <div class="sim-metric"><span>已实现盈亏</span><b>${Math.round(realized)}</b></div>`;
+      <div class="sim-metric"><span>未结算占用</span><b>${Math.round(stats.pending_stake ?? locked)}</b></div>
+      <div class="sim-metric"><span>已实现盈亏</span><b>${Math.round(stats.realized_profit ?? realized)}</b></div>
+      <div class="sim-metric"><span>胜率</span><b>${stats.win_rate ?? 0}%</b></div>
+      <div class="sim-metric"><span>ROI</span><b>${stats.roi ?? 0}%</b></div>
+      <div class="sim-metric"><span>单关 / 串关</span><b>${stats.single_bets ?? 0} / ${stats.parlay_bets ?? 0}</b></div>
+      <div class="sim-metric"><span>已结算</span><b>${stats.settled_bets ?? 0}</b></div>`;
   }
   renderLedger();
   renderLlmHistory();
+  renderPostReviews();
+  updateDbStatus();
 }
 function renderLedger(){
   const ledger = document.getElementById('simLedger');
@@ -1070,6 +1142,9 @@ renderFilters(); render();
 async function boot(){
   try {
     await loadServerSimState();
+    document.getElementById('simLedger')?.classList.add('show');
+    document.getElementById('llmHistory')?.classList.add('show');
+    renderPostReviews();
   } catch (err) {
     const source = document.getElementById('oddsSource');
     if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户读取失败：${err.message}`;
