@@ -638,42 +638,6 @@ function simulateMatch(match){
   const profit = stake * (decimalOdds - 1);
   return { idx, prob, decimalOdds, edge, stakePct, stake, profit };
 }
-function autoPlaceBets(){
-  ensureSimAccount();
-  const candidates = matches.map(match => ({match, sim: simulateMatch(match)}))
-    .filter(item => item.sim.stake > 0)
-    .sort((a, b) => b.sim.edge - a.sim.edge);
-  const existing = new Set(simAccount.bets.map(bet => bet.key));
-  let placed = 0;
-  for (const {match, sim} of candidates) {
-    const key = betKey(match);
-    if (existing.has(key)) continue;
-    const stake = Math.min(Math.round(sim.stake), Math.floor(simAccount.cash));
-    if (stake <= 0) break;
-    simAccount.cash -= stake;
-    simAccount.bets.push({
-      key,
-      id: match.id,
-      match: `${match.home} vs ${match.away}`,
-      pick: match.api,
-      odds: Number(sim.decimalOdds.toFixed(2)),
-      edge: Number((sim.edge * 100).toFixed(1)),
-      stake,
-      potentialProfit: Math.round(stake * (sim.decimalOdds - 1)),
-      placedAt: new Date().toLocaleString('zh-CN', {hour12: false}),
-      status: '待赛'
-    });
-    placed++;
-  }
-  saveSimAccount();
-  renderSimulation();
-  const ledger = document.getElementById('simLedger');
-  if (ledger) ledger.classList.add('show');
-  if (!placed) {
-    const source = document.getElementById('oddsSource');
-    if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>没有新增下注。可能是优势不足、资金不足，或这些比赛已经下过。';
-  }
-}
 function matchById(id){
   return matches.find(match => String(match.id) === String(id));
 }
@@ -719,8 +683,7 @@ async function llmAutoPlaceBets(options={}){
     if (!res.ok) throw new Error(data.error || '请求失败');
     applyLlmBetPlan(data, options);
   } catch (err) {
-    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>LLM 自动下注失败：${err.message}；已使用强信号兜底策略。`;
-    if (options.manual) autoPlaceBets();
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>LLM 自动下注失败：${err.message}；未生成下注。`;
   } finally {
     llmBetRunning = false;
     if (btn) {

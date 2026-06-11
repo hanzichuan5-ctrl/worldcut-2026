@@ -1120,9 +1120,21 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         plan, text = call_llm_json(api_key, prompt, max_tokens=2200)
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        return fallback_auto_bet_plan(matches, settings, f"LLM API 错误 {exc.code}: {detail[:180]}")
+        return {
+            "summary": f"LLM API 错误 {exc.code}: {detail[:180]}",
+            "bets": [],
+            "model": MODEL,
+            "generated_at": beijing_time(),
+            "error": True,
+        }
     except Exception as exc:
-        return fallback_auto_bet_plan(matches, settings, f"LLM 自动下注计划解析失败：{exc}")
+        return {
+            "summary": f"LLM 自动下注计划解析失败：{exc}",
+            "bets": [],
+            "model": MODEL,
+            "generated_at": beijing_time(),
+            "error": True,
+        }
 
     safe_bets = []
     remaining = bankroll
@@ -1143,68 +1155,10 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         remaining -= stake
         item["stake"] = round(stake)
         safe_bets.append(item)
-    if len(safe_bets) < 3:
-        fallback = fallback_auto_bet_plan(matches, {**settings, "cash": remaining, "bankroll": bankroll}, "LLM给出的下注少于3单")
-        used_ids = {str(item.get("id")) for item in safe_bets}
-        for item in fallback.get("bets", []):
-            if len(safe_bets) >= 3:
-                break
-            if str(item.get("id")) in used_ids:
-                continue
-            safe_bets.append(item)
-            used_ids.add(str(item.get("id")))
-        if len(safe_bets) > len(plan.get("bets", [])):
-            plan["summary"] = f"{plan.get('summary') or 'LLM已生成计划'}；因下注数量过少，已用强信号小仓策略补足。"
     return {
         "summary": str(plan.get("summary") or "LLM 已生成模拟下注计划。"),
         "bets": safe_bets,
         "model": MODEL,
-        "generated_at": beijing_time(),
-    }
-
-
-def fallback_auto_bet_plan(matches: list[dict], settings: dict, reason: str) -> dict:
-    bankroll = float(settings.get("cash") or settings.get("bankroll") or 0)
-    max_stake_pct = float(settings.get("maxStakePct") or 5)
-    remaining = bankroll
-    bets = []
-    candidates = []
-    for match in matches:
-        probs = match.get("probs") or []
-        odds = match.get("oddsDecimal") or []
-        if len(probs) < 3 or len(odds) < 3:
-            continue
-        idx = max(range(3), key=lambda i: float(probs[i] or 0))
-        pick = ("主胜", "平局", "客胜")[idx]
-        prob = float(probs[idx]) / 100
-        decimal_odds = float(odds[idx])
-        if prob < 0.45 and decimal_odds < 2.0:
-            continue
-        confidence_score = prob * 100
-        if decimal_odds < 1.2:
-            confidence_score -= 8
-        candidates.append((confidence_score, match, pick, prob, decimal_odds))
-    target_count = min(6, max(3, len(candidates) // 3)) if candidates else 0
-    for confidence_score, match, pick, prob, decimal_odds in sorted(candidates, reverse=True, key=lambda item: item[0])[:target_count]:
-        stake_pct = min(max_stake_pct, 0.5 + max(0, prob - 0.5) * 5)
-        stake = min(bankroll * stake_pct / 100, remaining)
-        if stake <= 0:
-            break
-        remaining -= stake
-        bets.append({
-            "id": match.get("id"),
-            "pick": pick,
-            "probability": round(prob, 3),
-            "edge_pct": round((prob * decimal_odds - 1) * 100, 1),
-            "stake": round(stake),
-            "reason": "LLM不可用，按强信号小仓试单兜底",
-        })
-        if bankroll and (bankroll - remaining) / bankroll >= 0.18:
-            break
-    return {
-        "summary": f"{reason}；已使用数学规则兜底生成模拟计划。",
-        "bets": bets,
-        "model": f"{MODEL} fallback",
         "generated_at": beijing_time(),
     }
 
