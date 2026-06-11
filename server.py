@@ -489,7 +489,12 @@ def parse_sporttery_matches(data: dict) -> list[dict]:
             "away": str(away),
             "league": sporttery_pick(row, ("leagueName", "leagueAbbName", "leagueAllName", "league", "l_cn")),
             "match_no": sporttery_pick(row, ("matchNumStr", "matchNum", "matchNo", "num", "issueNum")),
-            "match_time": sporttery_pick(row, ("matchDate", "matchTime", "businessDate", "date", "time")),
+            "match_date": sporttery_pick(row, ("matchDate", "businessDate", "date")),
+            "match_clock": sporttery_pick(row, ("matchTime", "time")),
+            "match_time": " ".join(str(part) for part in (
+                sporttery_pick(row, ("matchDate", "businessDate", "date")),
+                sporttery_pick(row, ("matchTime", "time")),
+            ) if part),
             "decimal": [win, draw, lose],
             "american": [decimal_to_american(win), decimal_to_american(draw), decimal_to_american(lose)],
             "source": "中国体育彩票竞彩网固定奖金",

@@ -332,6 +332,11 @@ function cnDate(dateText){
   if (!m) return dateText || '日期待定';
   return `${Number(m[2])}月${Number(m[3])}日`;
 }
+function cnDateTime(dateText){
+  const m = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}:\d{2}))?/);
+  if (!m) return dateText || '时间待定';
+  return `${m[1]}-${m[2]}-${m[3]} ${m[4] || '时间待定'}`;
+}
 function probsFromDecimal(decimalOdds){
   const implied = decimalOdds.map(v => 1 / v);
   const total = implied.reduce((sum, v) => sum + v, 0) || 1;
@@ -366,7 +371,8 @@ function sportteryToMatch(item, idx){
   return {
     id: `tc-${idx + 1}`,
     d: cnDate(item.match_time),
-    time: item.match_no || item.match_time || '',
+    time: cnDateTime(item.match_time),
+    matchNo: item.match_no || '',
     home: item.home,
     away: item.away,
     venue: `${item.league || '世界杯'} · 中国体育彩票`,
@@ -672,9 +678,7 @@ function oddsSignature(){
 function maybeAutoLlmBet(){
   const signature = oddsSignature();
   if (!matches.length || !signature || signature === lastAutoBetSignature) return;
-  lastAutoBetSignature = signature;
-  saveSimAccount();
-  llmAutoPlaceBets({manual:false});
+  llmAutoPlaceBets({manual:false, signature});
 }
 async function llmAutoPlaceBets(options={}){
   if (llmBetRunning) return;
@@ -707,7 +711,7 @@ async function llmAutoPlaceBets(options={}){
     applyLlmBetPlan(data, options);
   } catch (err) {
     if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>LLM 自动下注失败：${err.message}；已退回数学规则。`;
-    autoPlaceBets();
+    if (options.manual) autoPlaceBets();
   } finally {
     llmBetRunning = false;
     if (btn) {
@@ -745,8 +749,9 @@ function applyLlmBetPlan(plan, options={}){
     });
     placed++;
   }
-  saveSimAccount();
   recordLlmBetPlan(plan, placed, options.manual);
+  if (options.signature) lastAutoBetSignature = options.signature;
+  saveSimAccount();
   renderSimulation();
   renderLlmHistory();
   document.getElementById('simLedger')?.classList.add('show');
@@ -874,7 +879,7 @@ function render(){
   const list = active==='全部' ? matches : matches.filter(m=>m.d===active);
   document.getElementById('cards').innerHTML = list.map(m=>`
     <article class="card">
-      <div class="card-head"><div><div class="date">${m.d} · 美东时间 ${m.time}</div><div class="date">竞猜选项：${m.api}</div></div><div class="venue">${m.venue}<br>${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
+      <div class="card-head"><div><div class="date">${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? `北京时间 ${m.time}` : `${m.d} · 美东时间 ${m.time}`}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${m.api}</div></div><div class="venue">${m.venue}<br>${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
       <div class="teams">
         <div class="match"><div class="team"><strong>${m.home}</strong><span>主队</span></div><div class="vs">对阵</div><div class="team" style="text-align:right"><strong>${m.away}</strong><span>客队</span></div></div>
         <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span><span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
