@@ -325,6 +325,8 @@ let llmBetHistory = loadLlmBetHistory();
 let postReviews = [];
 let simStats = {};
 let settlementInfo = {};
+let workerInfo = {};
+let workerLog = [];
 let simAccountId = GLOBAL_SIM_ACCOUNT_ID;
 let lastAutoBetSignature = '';
 let llmBetRunning = false;
@@ -586,6 +588,8 @@ async function loadServerSimState(){
   postReviews = Array.isArray(data.post_reviews) ? data.post_reviews : [];
   simStats = data.stats || {};
   settlementInfo = data.settlement || {};
+  workerInfo = data.worker || {};
+  workerLog = Array.isArray(data.worker_log) ? data.worker_log : [];
   lastAutoBetSignature = data.last_signature || '';
   if (simAccount.initial) {
     const bankroll = document.getElementById('bankroll');
@@ -607,6 +611,8 @@ async function saveSimAccount(){
         post_reviews: postReviews,
         stats: simStats,
         settlement: settlementInfo,
+        worker: workerInfo,
+        worker_log: workerLog,
         last_signature: lastAutoBetSignature
       })
     });
@@ -620,8 +626,10 @@ function updateDbStatus(data={}){
   if (!el) return;
   const stats = data.stats || simStats || {};
   const settlement = data.settlement || settlementInfo || {};
+  const worker = data.worker || workerInfo || {};
   const checked = settlement.last_checked_at || data.updated_at || '刚刚';
-  el.innerHTML = `<b>数据库：</b>已加载统一账户 global。持仓 ${stats.total_bets || 0} 单，待结算 ${stats.pending_bets || 0} 单，已结算 ${stats.settled_bets || 0} 单，赛后复盘 ${postReviews.length || 0} 条。最近结算检查：${checked}。`;
+  const workerText = worker.last_run_at ? `后台最近运行：${worker.last_run_at}，赔率 ${worker.last_odds_status || '-'} / ${worker.last_odds_count || 0} 场，新增下注 ${worker.last_placed || 0} 单。` : '后台任务等待首次运行。';
+  el.innerHTML = `<b>数据库：</b>已加载统一账户 global。持仓 ${stats.total_bets || 0} 单，待结算 ${stats.pending_bets || 0} 单，已结算 ${stats.settled_bets || 0} 单，赛后复盘 ${postReviews.length || 0} 条。最近结算检查：${checked}。${workerText}`;
 }
 function loadLlmBetHistory(){
   return [];
@@ -856,6 +864,8 @@ async function settleSimAccount(){
     postReviews = Array.isArray(data.post_reviews) ? data.post_reviews : postReviews;
     simStats = data.stats || simStats;
     settlementInfo = data.settlement || settlementInfo;
+    workerInfo = data.worker || workerInfo;
+    workerLog = Array.isArray(data.worker_log) ? data.worker_log : workerLog;
     renderSimulation();
     document.getElementById('simLedger')?.classList.add('show');
     document.getElementById('llmHistory')?.classList.add('show');
@@ -868,11 +878,11 @@ async function settleSimAccount(){
 function renderLlmHistory(){
   const panel = document.getElementById('llmHistory');
   if (!panel) return;
-  if (!llmBetHistory.length) {
-    panel.innerHTML = '<div class="llm-history-item"><b>暂无 LLM 下注历史</b>赔率加载成功后会自动触发一次 LLM 模拟下注。</div>';
+  if (!llmBetHistory.length && !workerLog.length) {
+    panel.innerHTML = '<div class="llm-history-item"><b>暂无 LLM 下注历史</b>后台任务会每 10 分钟刷新赔率、触发 LLM 模拟下注并写入数据库。</div>';
     return;
   }
-  panel.innerHTML = llmBetHistory.slice(0, 10).map(item => `
+  const historyHtml = llmBetHistory.slice(0, 10).map(item => `
     <div class="llm-history-item">
       <b>${item.time} · ${item.mode} · 新增 ${item.placed} 单</b>
       <div>${item.summary || '无摘要'}${item.planMode ? ` · 模式 ${item.planMode}` : ''}${item.model ? ` · ${item.model}` : ''}</div>
@@ -880,6 +890,13 @@ function renderLlmHistory(){
       <div>${(item.parlays || []).slice(0, 3).map(parlay => `${parlay.type} ${parlay.stake || 0}，赔率 ${parlay.combined_odds || '-'}`).join('；')}</div>
       <div>${(item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.pick}：${decision.reason || '无理由'}`).join('；')}</div>
     </div>`).join('');
+  const workerHtml = workerLog.slice(0, 5).map(item => `
+    <div class="llm-history-item">
+      <b>${item.time || ''} · 后台任务 · 下注 ${item.placed || 0} / 结算 ${item.settled || 0}</b>
+      <div>赔率：${item.odds_status || '-'}，场次 ${item.odds_count || 0}，新增复盘 ${item.reviews_added || 0}</div>
+      <div>${item.summary || item.error || '本轮无新增动作'}</div>
+    </div>`).join('');
+  panel.innerHTML = historyHtml + workerHtml;
 }
 function renderPostReviews(){
   const panel = document.getElementById('postReview');

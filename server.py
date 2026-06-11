@@ -5,6 +5,8 @@ import json
 import os
 import re
 import sqlite3
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from html import unescape
@@ -34,6 +36,11 @@ PROMPT_VERSION = "casual-v2"
 PREDICTION_CACHE: dict[str, dict] = {}
 DATA_CACHE: dict[str, dict] = {}
 BEIJING_TZ = timezone(timedelta(hours=8))
+AUTO_BET_STRATEGY_VERSION = "research-v4-backend"
+AUTO_WORKER_ENABLED = os.getenv("AUTO_WORKER_ENABLED", "1") != "0"
+AUTO_WORKER_INTERVAL_SECONDS = max(60, int(os.getenv("AUTO_WORKER_INTERVAL_SECONDS", "600")))
+AUTO_WORKER_ACCOUNT_ID = os.getenv("AUTO_WORKER_ACCOUNT_ID", "global")
+AUTO_WORKER_STARTED = False
 TEAM_EN = {
     "墨西哥": "Mexico",
     "南非": "South Africa",
@@ -325,6 +332,7 @@ def save_sim_state(state: dict) -> dict:
     account = state.get("account") if isinstance(state.get("account"), dict) else {"initial": 10000, "cash": 10000, "bets": []}
     history = state.get("history") if isinstance(state.get("history"), list) else []
     post_reviews = state.get("post_reviews") if isinstance(state.get("post_reviews"), list) else []
+    worker_log = state.get("worker_log") if isinstance(state.get("worker_log"), list) else []
     safe_state = {
         "account_id": account_id,
         "account": account,
@@ -332,6 +340,8 @@ def save_sim_state(state: dict) -> dict:
         "post_reviews": post_reviews[:100],
         "stats": state.get("stats") if isinstance(state.get("stats"), dict) else calculate_sim_stats(account),
         "settlement": state.get("settlement") if isinstance(state.get("settlement"), dict) else {},
+        "worker": state.get("worker") if isinstance(state.get("worker"), dict) else {},
+        "worker_log": worker_log[:50],
         "last_signature": str(state.get("last_signature") or "")[:8000],
         "updated_at": beijing_time(),
     }
@@ -591,6 +601,8 @@ def settle_sim_account(account_id: str | None) -> dict:
         "post_reviews": state.get("post_reviews", []),
         "stats": state.get("stats", {}),
         "settlement": state.get("settlement", {}),
+        "worker": state.get("worker", {}),
+        "worker_log": state.get("worker_log", []),
         "updated_at": beijing_time(),
     }
 
@@ -603,6 +615,140 @@ def get_sim_snapshot(account_id: str | None, auto_settle: bool = True) -> dict:
     generate_missing_post_reviews(state)
     save_sim_state(state)
     return state
+
+
+def bet_key_for_pick(match: dict, pick: str) -> str:
+    return f"{match.get('id')}:{match.get('home')}-{match.get('away')}:{pick}"
+
+
+def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, signature: str, trigger: str) -> dict:
+    account = state.get("account") if isinstance(state.get("account"), dict) else {"initial": 10000, "cash": 10000, "bets": []}
+    bets = account.get("bets") if isinstance(account.get("bets"), list) else []
+    account["bets"] = bets
+    match_by_id = {str(match.get("id")): match for match in matches}
+    existing = {str(bet.get("key")) for bet in bets if bet.get("key")}
+    placed = 0
+    for item in plan.get("bets", []) if isinstance(plan.get("bets"), list) else []:
+        mid = str(item.get("id"))
+        match = match_by_id.get(mid)
+        pick = item.get("pick")
+        if not match or pick not in ("主胜", "平局", "客胜"):
+            continue
+        key = bet_key_for_pick(match, pick)
+        if key in existing:
+            continue
+        try:
+            stake = min(round(float(item.get("stake") or 0)), int(float(account.get("cash") or 0)))
+        except (TypeError, ValueError):
+            stake = 0
+        if stake <= 0:
+            continue
+        odds = decimal_odds_for_pick(match, pick)
+        if not odds:
+            continue
+        account["cash"] = float(account.get("cash") or 0) - stake
+        bets.append({
+            "key": key,
+            "id": match.get("id"),
+            "match": f"{match.get('home')} vs {match.get('away')}",
+            "pick": pick,
+            "odds": round(odds, 2),
+            "edge": item.get("edge_pct", 0),
+            "probability": item.get("probability", 0),
+            "stake": stake,
+            "potentialProfit": round(stake * (odds - 1)),
+            "reason": str(item.get("reason") or "LLM 模拟下注")[:180],
+            "placedAt": beijing_time(),
+            "status": "待赛",
+            "agent": "LLM",
+        })
+        existing.add(key)
+        placed += 1
+    for parlay in plan.get("parlays", []) if isinstance(plan.get("parlays"), list) else []:
+        raw_legs = parlay.get("legs") if isinstance(parlay.get("legs"), list) else []
+        key = "parlay:" + "|".join(f"{leg.get('id')}-{leg.get('pick')}" for leg in raw_legs)
+        if key in existing:
+            continue
+        legs = []
+        combined_odds = 1.0
+        for leg in raw_legs[:3]:
+            match = match_by_id.get(str(leg.get("id")))
+            pick = leg.get("pick")
+            if not match or pick not in ("主胜", "平局", "客胜"):
+                continue
+            odds = decimal_odds_for_pick(match, pick)
+            if not odds:
+                continue
+            combined_odds *= odds
+            legs.append({
+                "id": match.get("id"),
+                "match": f"{match.get('home')} vs {match.get('away')}",
+                "home": match.get("home"),
+                "away": match.get("away"),
+                "pick": pick,
+                "odds": round(odds, 2),
+            })
+        if len(legs) < 2:
+            continue
+        try:
+            stake = min(round(float(parlay.get("stake") or 0)), int(float(account.get("cash") or 0)))
+        except (TypeError, ValueError):
+            stake = 0
+        if stake <= 0:
+            continue
+        combined_odds = float(parlay.get("combined_odds") or combined_odds)
+        account["cash"] = float(account.get("cash") or 0) - stake
+        bets.append({
+            "key": key,
+            "id": key,
+            "type": "parlay",
+            "match": " × ".join(f"{leg.get('match')} {leg.get('pick')}" for leg in legs),
+            "legs": legs,
+            "pick": parlay.get("type") or f"{len(legs)}串1",
+            "odds": round(combined_odds, 2),
+            "stake": stake,
+            "potentialProfit": round(stake * (combined_odds - 1)),
+            "reason": str(parlay.get("reason") or "LLM 串关模拟下注")[:180],
+            "placedAt": beijing_time(),
+            "status": "待赛",
+            "agent": "LLM",
+        })
+        existing.add(key)
+        placed += 1
+    history = state.get("history") if isinstance(state.get("history"), list) else []
+    history.insert(0, {
+        "time": beijing_time(),
+        "mode": trigger,
+        "summary": plan.get("summary") or "",
+        "planMode": plan.get("mode") or "",
+        "model": plan.get("model") or MODEL,
+        "placed": placed,
+        "bets": [
+            {
+                "id": bet.get("id"),
+                "pick": bet.get("pick"),
+                "stake": bet.get("stake"),
+                "edge_pct": bet.get("edge_pct"),
+                "reason": bet.get("reason"),
+            }
+            for bet in plan.get("bets", [])[:20]
+        ],
+        "parlays": plan.get("parlays", [])[:10] if isinstance(plan.get("parlays"), list) else [],
+        "decisions": plan.get("decisions", [])[:80] if isinstance(plan.get("decisions"), list) else [],
+    })
+    state["account"] = account
+    state["history"] = history[:50]
+    if not plan.get("error"):
+        state["last_signature"] = signature
+    state["stats"] = calculate_sim_stats(account)
+    state["worker"] = {
+        "last_bet_at": beijing_time(),
+        "last_bet_placed": placed,
+        "last_bet_summary": plan.get("summary") or "",
+        "last_signature": signature if not plan.get("error") else state.get("last_signature", ""),
+    }
+    save_sim_state(state)
+    return {"placed": placed, "state": state}
 
 
 def summarize_analysis(text: str) -> str:
@@ -699,6 +845,88 @@ def decimal_to_american(decimal_odds: float | None) -> int | None:
     if decimal_odds >= 2:
         return round((decimal_odds - 1) * 100)
     return round(-100 / (decimal_odds - 1))
+
+
+def probs_from_decimal(decimal_odds: list[float]) -> list[int]:
+    implied = [1 / value for value in decimal_odds if value and value > 1]
+    if len(implied) != 3:
+        return [34, 33, 33]
+    total = sum(implied) or 1
+    return [round((value / total) * 100) for value in implied]
+
+
+def pick_from_probs(home: str, away: str, probs: list[int]) -> tuple[str, str]:
+    idx = probs.index(max(probs))
+    if idx == 0:
+        return home, "主胜"
+    if idx == 1:
+        return "平局", "平局"
+    return away, "客胜"
+
+
+def conf_from_prob(prob: int) -> str:
+    if prob >= 75:
+        return "极高"
+    if prob >= 63:
+        return "高"
+    if prob >= 55:
+        return "中高"
+    return "中"
+
+
+def score_from_pick(api_pick: str) -> str:
+    if api_pick == "主胜":
+        return "2-1"
+    if api_pick == "客胜":
+        return "1-2"
+    return "1-1"
+
+
+def cn_date(date_text: str) -> str:
+    matched = re.search(r"^(\d{4})-(\d{2})-(\d{2})", str(date_text or ""))
+    if not matched:
+        return str(date_text or "日期待定")
+    return f"{int(matched.group(2))}月{int(matched.group(3))}日"
+
+
+def cn_datetime(date_text: str) -> str:
+    matched = re.search(r"^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}:\d{2}))?", str(date_text or ""))
+    if not matched:
+        return str(date_text or "时间待定")
+    return f"{matched.group(1)}-{matched.group(2)}-{matched.group(3)} {matched.group(4) or '时间待定'}"
+
+
+def sporttery_item_to_match(item: dict, idx: int) -> dict:
+    decimal = item.get("decimal") or []
+    probs = probs_from_decimal(decimal)
+    pick, api_pick = pick_from_probs(item.get("home", ""), item.get("away", ""), probs)
+    return {
+        "id": f"tc-{idx + 1}",
+        "d": cn_date(item.get("match_time")),
+        "time": cn_datetime(item.get("match_time")),
+        "matchNo": item.get("match_no") or "",
+        "home": item.get("home"),
+        "away": item.get("away"),
+        "venue": f"{item.get('league') or '世界杯'} · 中国体育彩票",
+        "odds": item.get("american") or [decimal_to_american(value) for value in decimal],
+        "oddsDecimal": decimal,
+        "oddsSource": "中国体育彩票竞彩网固定奖金",
+        "pick": pick,
+        "api": api_pick,
+        "score": score_from_pick(api_pick),
+        "conf": conf_from_prob(max(probs)),
+        "probs": probs,
+        "why": f"以中国体育彩票竞彩网当前固定奖金为主数据源。{api_pick}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。",
+    }
+
+
+def sporttery_snapshot_to_matches(snapshot: dict) -> list[dict]:
+    return [sporttery_item_to_match(item, idx) for idx, item in enumerate(snapshot.get("matches", [])[:40])]
+
+
+def odds_signature(matches: list[dict]) -> str:
+    body = "|".join(f"{match.get('id')}:{match.get('home')}-{match.get('away')}:{'/'.join(str(value) for value in (match.get('odds') or []))}" for match in matches)
+    return f"{AUTO_BET_STRATEGY_VERSION}|{body}"
 
 
 def walk_json(value):
@@ -1197,6 +1425,9 @@ class Handler(SimpleHTTPRequestHandler):
             params = parse.parse_qs(parsed.query)
             json_response(self, 200, settle_sim_account(params.get("account_id", ["global"])[0]))
             return
+        if parsed.path == "/api/sim/worker/run":
+            json_response(self, 200, run_auto_worker_once())
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -1659,8 +1890,97 @@ def call_openai(api_key: str, match: dict, intelligence: list[dict]) -> str:
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError("LLM API 没有返回 chat 文本。") from exc
 
+
+def run_auto_worker_once() -> dict:
+    account_id = AUTO_WORKER_ACCOUNT_ID
+    state = get_sim_state(account_id)
+    snapshot = sporttery_odds_snapshot()
+    matches = sporttery_snapshot_to_matches(snapshot) if snapshot.get("status") == "ok" else []
+    signature = odds_signature(matches) if matches else ""
+    settle_result = settle_sim_account(account_id)
+    placed = 0
+    bet_summary = ""
+    bet_error = ""
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if matches and signature and signature != state.get("last_signature") and api_key:
+        refreshed_state = get_sim_state(account_id)
+        account = refreshed_state.get("account") or {"initial": 10000, "cash": 10000, "bets": []}
+        plan = get_auto_bet_plan(api_key, {
+            "matches": matches,
+            "settings": {
+                "bankroll": account.get("initial", 10000),
+                "cash": account.get("cash", 10000),
+                "riskMode": "half",
+                "maxStakePct": 5,
+                "minEdgePct": 2,
+            },
+        })
+        applied = apply_auto_bet_plan_to_state(refreshed_state, matches, plan, signature, "后台自动触发")
+        placed = applied["placed"]
+        bet_summary = plan.get("summary") or ""
+        if plan.get("error"):
+            bet_error = bet_summary
+    elif matches and signature == state.get("last_signature"):
+        bet_summary = "赔率签名未变化，跳过 LLM 自动下注。"
+    elif not api_key:
+        bet_error = "未配置 OPENAI_API_KEY，跳过 LLM 自动下注。"
+    else:
+        bet_error = f"体彩赔率不可用，状态 {snapshot.get('status')}。"
+    result = {
+        "time": beijing_time(),
+        "odds_status": snapshot.get("status"),
+        "odds_count": len(matches),
+        "settled": settle_result.get("settled", 0),
+        "reviews_added": settle_result.get("reviews_added", 0),
+        "placed": placed,
+        "summary": bet_summary,
+        "error": bet_error,
+    }
+    state_after = get_sim_state(account_id)
+    worker_log = state_after.get("worker_log") if isinstance(state_after.get("worker_log"), list) else []
+    worker_log.insert(0, result)
+    state_after["worker_log"] = worker_log[:50]
+    state_after["worker"] = {
+        **(state_after.get("worker") if isinstance(state_after.get("worker"), dict) else {}),
+        "last_run_at": result["time"],
+        "last_odds_status": result["odds_status"],
+        "last_odds_count": result["odds_count"],
+        "last_settled": result["settled"],
+        "last_reviews_added": result["reviews_added"],
+        "last_placed": result["placed"],
+        "last_error": result["error"],
+    }
+    save_sim_state(state_after)
+    print(
+        f"[auto-worker] {result['time']} odds={result['odds_status']} count={result['odds_count']} "
+        f"placed={result['placed']} settled={result['settled']} reviews={result['reviews_added']} "
+        f"error={result['error'] or '-'}",
+        flush=True,
+    )
+    return result
+
+
+def auto_worker_loop() -> None:
+    while True:
+        try:
+            run_auto_worker_once()
+        except Exception as exc:
+            print(f"[auto-worker] {beijing_time()} error={exc}", flush=True)
+        time.sleep(AUTO_WORKER_INTERVAL_SECONDS)
+
+
+def start_auto_worker() -> None:
+    global AUTO_WORKER_STARTED
+    if AUTO_WORKER_STARTED or not AUTO_WORKER_ENABLED:
+        return
+    AUTO_WORKER_STARTED = True
+    thread = threading.Thread(target=auto_worker_loop, name="auto-worker", daemon=True)
+    thread.start()
+
+
 def main() -> None:
     init_db()
+    start_auto_worker()
     port = int(os.getenv("PORT", "8765"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"Serving on http://0.0.0.0:{port}")
