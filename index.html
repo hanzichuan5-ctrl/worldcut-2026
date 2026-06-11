@@ -310,6 +310,7 @@ let dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
 let active = '全部';
 const aiResults = new Map();
 const SIM_ACCOUNT_ID_KEY = 'worldcup-sim-account-id-v1';
+const AUTO_BET_STRATEGY_VERSION = 'research-v2';
 let simAccount = loadSimAccount();
 let llmBetHistory = loadLlmBetHistory();
 let simAccountId = localStorage.getItem(SIM_ACCOUNT_ID_KEY) || '';
@@ -673,7 +674,7 @@ function decimalForPick(match, pick){
   return americanToDecimal(match.odds[idx]);
 }
 function oddsSignature(){
-  return matches.map(match => `${match.id}:${match.home}-${match.away}:${(match.odds || []).join('/')}`).join('|');
+  return `${AUTO_BET_STRATEGY_VERSION}|${matches.map(match => `${match.id}:${match.home}-${match.away}:${(match.odds || []).join('/')}`).join('|')}`;
 }
 function maybeAutoLlmBet(){
   const signature = oddsSignature();
@@ -845,24 +846,33 @@ function renderLedger(){
 function renderSimulation(){
   const visible = active === '全部' ? matches : matches.filter(m => m.d === active);
   let totalStake = 0, totalProfit = 0, count = 0;
+  const activeBets = new Map((simAccount.bets || []).map(bet => [String(bet.id), bet]));
   for (const match of visible) {
     const sim = simulateMatch(match);
+    const el = document.getElementById(`sim-${match.id}`);
+    if (!el) continue;
+    const llmBet = activeBets.get(String(match.id));
+    if (llmBet) {
+      totalStake += Number(llmBet.stake || 0);
+      totalProfit += Number(llmBet.potentialProfit || 0);
+      count++;
+      el.innerHTML = `<b>LLM 持仓：</b>${llmBet.pick}，赔率 ${llmBet.odds}，下注 ${llmBet.stake}，潜在盈利 ${llmBet.potentialProfit}。${llmBet.reason || ''}`;
+      continue;
+    }
     totalStake += sim.stake;
     totalProfit += sim.profit;
     if (sim.stake > 0) count++;
-    const el = document.getElementById(`sim-${match.id}`);
-    if (!el) continue;
     if (sim.stake <= 0) {
-      el.innerHTML = `<b>模拟盘：</b>跳过。模型优势 ${(sim.edge * 100).toFixed(1)}%，低于最低优势门槛。`;
+      el.innerHTML = `<b>数学规则：</b>暂不下注。模型优势 ${(sim.edge * 100).toFixed(1)}%，低于门槛；等待 LLM 计划或手动复核。`;
     } else {
-      el.innerHTML = `<b>模拟盘：</b>${match.api}，赔率 ${sim.decimalOdds.toFixed(2)}，优势 ${(sim.edge * 100).toFixed(1)}%，下注 ${Math.round(sim.stake)}，潜在盈利 ${Math.round(sim.profit)}。`;
+      el.innerHTML = `<b>数学建议：</b>${match.api}，赔率 ${sim.decimalOdds.toFixed(2)}，优势 ${(sim.edge * 100).toFixed(1)}%，建议 ${Math.round(sim.stake)}，潜在盈利 ${Math.round(sim.profit)}。`;
     }
   }
   const bankroll = Math.max(0, Number(document.getElementById('bankroll')?.value || 10000));
   const summary = document.getElementById('simSummary');
   if (summary) {
     summary.innerHTML = `
-      <div class="sim-metric"><span>推荐下注场次</span><b>${count}</b></div>
+      <div class="sim-metric"><span>持仓/建议场次</span><b>${count}</b></div>
       <div class="sim-metric"><span>总投入</span><b>${Math.round(totalStake)}</b></div>
       <div class="sim-metric"><span>理论盈利</span><b>${Math.round(totalProfit)}</b></div>
       <div class="sim-metric"><span>本金占用</span><b>${bankroll ? ((totalStake / bankroll) * 100).toFixed(1) : '0.0'}%</b></div>`;
