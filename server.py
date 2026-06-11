@@ -983,6 +983,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 def extract_json_object(text: str) -> dict:
     text = text.strip()
+    tagged = re.search(r"<json>\s*(.*?)\s*</json>", text, re.S | re.I)
+    if tagged:
+        text = tagged.group(1).strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
@@ -994,6 +997,62 @@ def extract_json_object(text: str) -> dict:
         if start >= 0 and end > start:
             return json.loads(text[start:end + 1])
         raise
+
+
+def call_llm_json(api_key: str, prompt: str, max_tokens: int = 2200) -> tuple[dict, str]:
+    body = {
+        "model": MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是结构化输出代理。必须把唯一 JSON 放在 <json> 和 </json> 标签之间，不要输出标签外文本。",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": max_tokens,
+    }
+    req = request.Request(
+        f"{BASE_URL}/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with request.urlopen(req, timeout=45) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    text = data["choices"][0]["message"]["content"].strip()
+    try:
+        return extract_json_object(text), text
+    except Exception:
+        repair_prompt = f"""下面这段文本本应包含一个 JSON 对象。请只输出修复后的 JSON，并放在 <json></json> 中。
+
+要求：
+- 顶层对象只能包含 summary 和 bets。
+- bets 必须是数组。
+- 不要添加解释。
+
+原始文本：
+{text[:6000]}
+"""
+        repair_body = {
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": "只输出 <json>...</json>，其中必须是合法 JSON。"},
+                {"role": "user", "content": repair_prompt},
+            ],
+            "temperature": 0,
+            "max_tokens": max_tokens,
+        }
+        repair_req = request.Request(
+            f"{BASE_URL}/v1/chat/completions",
+            data=json.dumps(repair_body).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with request.urlopen(repair_req, timeout=45) as resp:
+            repair_data = json.loads(resp.read().decode("utf-8"))
+        repaired = repair_data["choices"][0]["message"]["content"].strip()
+        return extract_json_object(repaired), repaired
 
 
 def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
@@ -1017,7 +1076,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             "confidence": match.get("conf"),
             "source": match.get("oddsSource"),
         })
-    prompt = f"""你是 2026 世界杯模拟盘自动下注代理，只能输出 JSON，不能输出解释性正文。
+    prompt = f"""你是 2026 世界杯模拟盘自动下注代理。
 
 目标：基于 worldcup-2026-predictor skill 的思路，结合体彩固定奖金、页面概率、球队实力推断、新闻/裁判/阵容缺失风险，给出模拟下注计划。
 
@@ -1028,13 +1087,16 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 - 单场下注不能超过可用资金的 {max_stake_pct}%。
 - 只有你估计的正期望优势达到 {min_edge_pct}% 以上才下注。
 - 总下注金额建议不超过可用资金的 35%。
-- 输出必须是严格 JSON，不要 Markdown，不要代码块。
+- 输出必须把唯一 JSON 放在 <json> 和 </json> 标签之间。
+- 标签外不要写任何文字。
+- JSON 里不要出现注释、尾随逗号、NaN、Infinity。
 
 可用资金：{bankroll}
 设置：{json.dumps(settings, ensure_ascii=False)}
 比赛列表：{json.dumps(compact, ensure_ascii=False)}
 
-JSON 格式：
+输出格式：
+<json>
 {{
   "summary": "一句话说明整体策略",
   "bets": [
@@ -1048,27 +1110,10 @@ JSON 格式：
     }}
   ]
 }}
+</json>
 """
-    body = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": "你只输出严格 JSON。不要 Markdown，不要代码块，不要多余文本。"},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 2200,
-    }
-    req = request.Request(
-        f"{BASE_URL}/v1/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        text = data["choices"][0]["message"]["content"].strip()
-        plan = extract_json_object(text)
+        plan, text = call_llm_json(api_key, prompt, max_tokens=2200)
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         return fallback_auto_bet_plan(matches, settings, f"LLM API 错误 {exc.code}: {detail[:180]}")
