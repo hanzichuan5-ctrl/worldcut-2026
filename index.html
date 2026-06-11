@@ -104,7 +104,7 @@
     .sim-head p { margin: 4px 0 0; color: var(--muted); line-height: 1.45; font-size: 14px; }
     .sim-badge { display: inline-flex; align-items: center; min-height: 28px; border: 1px solid rgba(19,121,91,.22); background: #e8efe8; color: #265a43; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 800; white-space: nowrap; }
     .sim-body { padding: 14px 18px 16px; }
-    .sim-controls { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+    .sim-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
     .sim-control { min-height: 68px; display: grid; grid-template-rows: 18px 40px; gap: 5px; }
     .sim-control label { display: flex; align-items: center; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 18px; }
     .sim-control input, .sim-control select { width: 100%; height: 40px; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); padding: 0 10px; font: inherit; line-height: 40px; appearance: none; }
@@ -230,7 +230,6 @@
         </div>
         <div class="sim-body">
           <div class="sim-controls">
-            <div class="sim-control"><label for="simAccountId">账户 ID</label><input id="simAccountId" type="text" placeholder="自动生成"></div>
             <div class="sim-control"><label for="bankroll">虚拟本金</label><input id="bankroll" type="number" min="100" step="100" value="10000"></div>
             <div class="sim-control"><label for="riskMode">仓位模式</label><select id="riskMode"><option value="half">半凯利</option><option value="quarter">四分之一凯利</option><option value="flat">固定 1%</option></select></div>
             <div class="sim-control"><label for="maxStake">单场上限</label><input id="maxStake" type="number" min="0.5" max="20" step="0.5" value="5"></div>
@@ -313,11 +312,11 @@ const staticMatches = matches.map(match => ({...match, odds: [...match.odds], pr
 let dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
 let active = '全部';
 const aiResults = new Map();
-const SIM_ACCOUNT_ID_KEY = 'worldcup-sim-account-id-v1';
+const GLOBAL_SIM_ACCOUNT_ID = 'global';
 const AUTO_BET_STRATEGY_VERSION = 'research-v3';
 let simAccount = loadSimAccount();
 let llmBetHistory = loadLlmBetHistory();
-let simAccountId = localStorage.getItem(SIM_ACCOUNT_ID_KEY) || '';
+let simAccountId = GLOBAL_SIM_ACCOUNT_ID;
 let lastAutoBetSignature = '';
 let llmBetRunning = false;
 for (const match of matches) {
@@ -568,14 +567,11 @@ function loadSimAccount(){
   return {initial: 0, cash: 0, bets: []};
 }
 async function loadServerSimState(){
-  const query = simAccountId ? `?account_id=${encodeURIComponent(simAccountId)}` : '';
+  const query = `?account_id=${encodeURIComponent(GLOBAL_SIM_ACCOUNT_ID)}`;
   const res = await fetch(`/api/sim/account${query}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || '账户读取失败');
-  simAccountId = data.account_id;
-  localStorage.setItem(SIM_ACCOUNT_ID_KEY, simAccountId);
-  const input = document.getElementById('simAccountId');
-  if (input) input.value = simAccountId;
+  simAccountId = GLOBAL_SIM_ACCOUNT_ID;
   simAccount = data.account || {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
   llmBetHistory = Array.isArray(data.history) ? data.history : [];
   lastAutoBetSignature = data.last_signature || '';
@@ -752,12 +748,6 @@ function resetSimAccount(){
   simAccount = {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
   saveSimAccount();
   renderSimulation();
-}
-async function switchSimAccount(){
-  const raw = document.getElementById('simAccountId')?.value || '';
-  simAccountId = raw.trim();
-  localStorage.setItem(SIM_ACCOUNT_ID_KEY, simAccountId);
-  await loadServerSimState();
 }
 function toggleLedger(){
   document.getElementById('simLedger')?.classList.toggle('show');
@@ -990,7 +980,6 @@ renderFilters(); render();
     renderSimulation();
   });
 });
-document.getElementById('simAccountId')?.addEventListener('change', switchSimAccount);
 async function boot(){
   try {
     await loadServerSimState();
