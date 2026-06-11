@@ -1143,6 +1143,18 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         remaining -= stake
         item["stake"] = round(stake)
         safe_bets.append(item)
+    if len(safe_bets) < 3:
+        fallback = fallback_auto_bet_plan(matches, {**settings, "cash": remaining, "bankroll": bankroll}, "LLM给出的下注少于3单")
+        used_ids = {str(item.get("id")) for item in safe_bets}
+        for item in fallback.get("bets", []):
+            if len(safe_bets) >= 3:
+                break
+            if str(item.get("id")) in used_ids:
+                continue
+            safe_bets.append(item)
+            used_ids.add(str(item.get("id")))
+        if len(safe_bets) > len(plan.get("bets", [])):
+            plan["summary"] = f"{plan.get('summary') or 'LLM已生成计划'}；因下注数量过少，已用强信号小仓策略补足。"
     return {
         "summary": str(plan.get("summary") or "LLM 已生成模拟下注计划。"),
         "bets": safe_bets,
