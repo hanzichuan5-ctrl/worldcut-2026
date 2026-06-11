@@ -739,7 +739,8 @@ function recordLlmBetPlan(plan, placed, manual=false){
       stake: bet.stake,
       edge_pct: bet.edge_pct,
       reason: bet.reason
-    }))
+    })),
+    decisions: plan.decisions || []
   });
   llmBetHistory = llmBetHistory.slice(0, 20);
   saveLlmBetHistory();
@@ -770,6 +771,7 @@ function renderLlmHistory(){
       <b>${item.time} · ${item.mode} · 新增 ${item.placed} 单</b>
       <div>${item.summary || '无摘要'}${item.model ? ` · ${item.model}` : ''}</div>
       <div>${(item.bets || []).slice(0, 5).map(bet => `${bet.id} ${bet.pick} ${bet.stake || 0}，优势 ${bet.edge_pct || 0}%`).join('；') || '无下注'}</div>
+      <div>${(item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.pick}：${decision.reason || '无理由'}`).join('；')}</div>
     </div>`).join('');
 }
 function renderSimAccount(){
@@ -808,6 +810,7 @@ function renderSimulation(){
   const visible = active === '全部' ? matches : matches.filter(m => m.d === active);
   let totalStake = 0, totalProfit = 0, count = 0;
   const activeBets = new Map((simAccount.bets || []).map(bet => [String(bet.id), bet]));
+  const latestDecisions = new Map(((llmBetHistory[0] && llmBetHistory[0].decisions) || []).map(item => [String(item.id), item]));
   for (const match of visible) {
     const el = document.getElementById(`sim-${match.id}`);
     if (!el) continue;
@@ -819,7 +822,14 @@ function renderSimulation(){
       el.innerHTML = `<b>LLM 持仓：</b>${llmBet.pick}，赔率 ${llmBet.odds}，下注 ${llmBet.stake}，潜在盈利 ${llmBet.potentialProfit}。${llmBet.reason || ''}`;
       continue;
     }
-    el.innerHTML = '<b>LLM 持仓：</b>未下注。';
+    const decision = latestDecisions.get(String(match.id));
+    if (decision) {
+      const prob = Number(decision.probability || 0);
+      const probText = prob > 0 && prob <= 1 ? `${Math.round(prob * 100)}%` : `${prob || 0}%`;
+      el.innerHTML = `<b>LLM 决策：</b>未下注。倾向 ${decision.pick || '跳过'}，概率 ${probText}，风险 ${decision.risk || '中'}。${decision.reason || ''}`;
+    } else {
+      el.innerHTML = '<b>LLM 决策：</b>等待生成。';
+    }
   }
   const bankroll = Math.max(0, Number(document.getElementById('bankroll')?.value || 10000));
   const summary = document.getElementById('simSummary');

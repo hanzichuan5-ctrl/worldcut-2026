@@ -1103,6 +1103,17 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 <json>
 {{
   "summary": "一句话说明整体策略",
+  "decisions": [
+    {{
+      "id": "比赛id",
+      "pick": "主胜|平局|客胜|跳过",
+      "probability": 0.62,
+      "edge_pct": 4.2,
+      "stake": 120,
+      "risk": "低|中|高",
+      "reason": "20-80字中文理由"
+    }}
+  ],
   "bets": [
     {{
       "id": "比赛id",
@@ -1120,26 +1131,58 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         plan, text = call_llm_json(api_key, prompt, max_tokens=2200)
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
+        summary = f"LLM API 错误 {exc.code}: {detail[:180]}"
         return {
-            "summary": f"LLM API 错误 {exc.code}: {detail[:180]}",
+            "summary": summary,
+            "decisions": error_decisions(matches, summary),
             "bets": [],
             "model": MODEL,
             "generated_at": beijing_time(),
             "error": True,
         }
     except Exception as exc:
+        summary = f"LLM 自动下注计划解析失败：{exc}"
         return {
-            "summary": f"LLM 自动下注计划解析失败：{exc}",
+            "summary": summary,
+            "decisions": error_decisions(matches, summary),
             "bets": [],
             "model": MODEL,
             "generated_at": beijing_time(),
             "error": True,
         }
 
+    match_ids = {str(match.get("id")) for match in matches}
+    decisions_by_id = {}
+    raw_decisions = plan.get("decisions") if isinstance(plan.get("decisions"), list) else []
+    for item in raw_decisions:
+        if str(item.get("id")) not in match_ids:
+            continue
+        pick = item.get("pick") if item.get("pick") in ("主胜", "平局", "客胜", "跳过") else "跳过"
+        decisions_by_id[str(item.get("id"))] = {
+            "id": item.get("id"),
+            "pick": pick,
+            "probability": item.get("probability", 0),
+            "edge_pct": item.get("edge_pct", 0),
+            "stake": item.get("stake", 0) if pick != "跳过" else 0,
+            "risk": item.get("risk") or "中",
+            "reason": str(item.get("reason") or "LLM未给出详细理由")[:160],
+        }
+    for match in matches:
+        mid = str(match.get("id"))
+        if mid not in decisions_by_id:
+            decisions_by_id[mid] = {
+                "id": match.get("id"),
+                "pick": "跳过",
+                "probability": 0,
+                "edge_pct": 0,
+                "stake": 0,
+                "risk": "中",
+                "reason": "LLM未返回该场决策，按未下注处理。",
+            }
+
     safe_bets = []
     remaining = bankroll
     max_single = bankroll * max_stake_pct / 100
-    match_ids = {str(match.get("id")) for match in matches}
     for item in plan.get("bets", []):
         if str(item.get("id")) not in match_ids:
             continue
@@ -1155,12 +1198,31 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         remaining -= stake
         item["stake"] = round(stake)
         safe_bets.append(item)
+        if str(item.get("id")) in decisions_by_id:
+            decisions_by_id[str(item.get("id"))]["pick"] = pick
+            decisions_by_id[str(item.get("id"))]["stake"] = round(stake)
     return {
         "summary": str(plan.get("summary") or "LLM 已生成模拟下注计划。"),
+        "decisions": list(decisions_by_id.values()),
         "bets": safe_bets,
         "model": MODEL,
         "generated_at": beijing_time(),
     }
+
+
+def error_decisions(matches: list[dict], reason: str) -> list[dict]:
+    return [
+        {
+            "id": match.get("id"),
+            "pick": "跳过",
+            "probability": 0,
+            "edge_pct": 0,
+            "stake": 0,
+            "risk": "高",
+            "reason": f"{reason[:120]}；未生成LLM下注。",
+        }
+        for match in matches
+    ]
 
 
 def call_openai(api_key: str, match: dict, intelligence: list[dict]) -> str:
