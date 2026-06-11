@@ -69,6 +69,10 @@
     .prob { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 9px; }
     .prob span { display: block; font-size: 12px; color: var(--muted); }
     .prob b { font-size: 18px; }
+    .odds-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 16px 14px; }
+    .odds-box { background: #fff; border: 1px solid rgba(184,135,30,.35); border-radius: 8px; padding: 9px; }
+    .odds-box span { display: block; color: var(--muted); font-size: 12px; }
+    .odds-box b { display: block; margin-top: 2px; color: var(--gold); font-size: 19px; }
     .why { border-top: 1px solid var(--line); padding: 13px 16px 16px; color: var(--muted); line-height: 1.5; font-size: 14px; }
     .ai-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 12px 16px; background: #fffaf0; }
     .ai-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -160,8 +164,8 @@
       .vs { align-self: center; font-size: 13px; }
       .pick { grid-template-columns: 1fr; align-items: start; }
       .score { font-size: 26px; }
-      .probs { grid-template-columns: 1fr; }
-      .prob { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .probs, .odds-row { grid-template-columns: 1fr; }
+      .prob, .odds-box { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
       .prob span { overflow-wrap: anywhere; }
       .ai-bar { align-items: flex-start; flex-direction: column; }
       .ai-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -188,7 +192,7 @@
       .wrap { padding-left: 12px; padding-right: 12px; }
       h1 { font-size: clamp(25px, 7.8vw, 32px); }
       .card-head, .teams, .why, .ai-bar, .ai-summary, .ai-result { padding-left: 12px; padding-right: 12px; }
-      .probs { padding-left: 12px; padding-right: 12px; }
+      .probs, .odds-row { padding-left: 12px; padding-right: 12px; }
       .team strong { font-size: 18px; }
       .notice, .rule-card, .sources { font-size: 14px; }
     }
@@ -391,6 +395,10 @@ function sportteryToMatch(item, idx){
 function oddsLabel(odds){
   if (odds === null || odds === undefined) return '-';
   return odds > 0 ? `+${odds}` : String(odds);
+}
+function decimalOddsLabel(match, idx){
+  const decimal = match.oddsDecimal?.[idx] || americanToDecimal(match.odds[idx]);
+  return Number(decimal).toFixed(2);
 }
 function impliedPercent(odds){
   const decimal = americanToDecimal(odds);
@@ -895,6 +903,7 @@ function render(){
         <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span><span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
       </div>
       <div class="probs"><div class="prob"><span>${m.home}胜</span><b>${m.probs[0]}%</b></div><div class="prob"><span>平局</span><b>${m.probs[1]}%</b></div><div class="prob"><span>${m.away}胜</span><b>${m.probs[2]}%</b></div></div>
+      <div class="odds-row"><div class="odds-box"><span>${m.home}胜赔率</span><b>${decimalOddsLabel(m, 0)}</b></div><div class="odds-box"><span>平局赔率</span><b>${decimalOddsLabel(m, 1)}</b></div><div class="odds-box"><span>${m.away}胜赔率</span><b>${decimalOddsLabel(m, 2)}</b></div></div>
       ${renderOddsTrend(m)}
       <div class="sim-line" id="sim-${m.id}">模拟盘计算中...</div>
       <div class="why">${m.why}</div>
