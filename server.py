@@ -1078,15 +1078,19 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         })
     prompt = f"""你是 2026 世界杯模拟盘自动下注代理。
 
-目标：基于 worldcup-2026-predictor skill 的思路，结合体彩固定奖金、页面概率、球队实力推断、新闻/裁判/阵容缺失风险，给出模拟下注计划。
+目标：基于 worldcup-2026-predictor skill 的思路，结合体彩固定奖金、页面概率、球队实力推断、新闻/裁判/阵容缺失风险，给出模拟下注计划。这里是研究型模拟盘，不是真实资金，不要因为信息不完整就全部跳过。
 
 硬性限制：
 - 这是模拟盘，不是真实下注。
 - 不得编造伤病、裁判、新闻、大名单；缺失信息视为风险，降低下注金额。
 - 只允许选择 主胜、平局、客胜 或 跳过。
 - 单场下注不能超过可用资金的 {max_stake_pct}%。
-- 只有你估计的正期望优势达到 {min_edge_pct}% 以上才下注。
-- 总下注金额建议不超过可用资金的 35%。
+- 体彩固定奖金天然含水位，页面概率多为盘口隐含概率归一化；不要机械要求每场都有严格数学正期望。
+- 优先选择 3-6 场强信号小仓试单，除非整批比赛确实没有任何清晰倾向。
+- 强信号定义：热门方胜率/实力层级明显、赔率没有严重过热、或弱势方向有清晰背离价值。
+- 信息缺失时降低仓位，不要直接跳过所有比赛。
+- 单场常规下注建议为可用资金的 0.5%-2.0%；极强信号最多到 {max_stake_pct}%。
+- 总下注金额建议控制在可用资金的 8%-18%，最高不超过 35%。
 - 输出必须把唯一 JSON 放在 <json> 和 </json> 标签之间。
 - 标签外不要写任何文字。
 - JSON 里不要出现注释、尾随逗号、NaN、Infinity。
@@ -1150,25 +1154,28 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 def fallback_auto_bet_plan(matches: list[dict], settings: dict, reason: str) -> dict:
     bankroll = float(settings.get("cash") or settings.get("bankroll") or 0)
     max_stake_pct = float(settings.get("maxStakePct") or 5)
-    min_edge_pct = float(settings.get("minEdgePct") or 2)
     remaining = bankroll
     bets = []
     candidates = []
     for match in matches:
         probs = match.get("probs") or []
         odds = match.get("oddsDecimal") or []
-        pick = match.get("api")
-        idx = {"主胜": 0, "平局": 1, "客胜": 2}.get(pick)
-        if idx is None or len(probs) <= idx or len(odds) <= idx:
+        if len(probs) < 3 or len(odds) < 3:
             continue
+        idx = max(range(3), key=lambda i: float(probs[i] or 0))
+        pick = ("主胜", "平局", "客胜")[idx]
         prob = float(probs[idx]) / 100
         decimal_odds = float(odds[idx])
-        edge_pct = ((prob * decimal_odds) - 1) * 100
-        if edge_pct < min_edge_pct:
+        if prob < 0.45 and decimal_odds < 2.0:
             continue
-        candidates.append((edge_pct, match, pick, prob, decimal_odds))
-    for edge_pct, match, pick, prob, decimal_odds in sorted(candidates, reverse=True, key=lambda item: item[0]):
-        stake = min(bankroll * max_stake_pct / 100, remaining)
+        confidence_score = prob * 100
+        if decimal_odds < 1.2:
+            confidence_score -= 8
+        candidates.append((confidence_score, match, pick, prob, decimal_odds))
+    target_count = min(6, max(3, len(candidates) // 3)) if candidates else 0
+    for confidence_score, match, pick, prob, decimal_odds in sorted(candidates, reverse=True, key=lambda item: item[0])[:target_count]:
+        stake_pct = min(max_stake_pct, 0.5 + max(0, prob - 0.5) * 5)
+        stake = min(bankroll * stake_pct / 100, remaining)
         if stake <= 0:
             break
         remaining -= stake
@@ -1176,11 +1183,11 @@ def fallback_auto_bet_plan(matches: list[dict], settings: dict, reason: str) -> 
             "id": match.get("id"),
             "pick": pick,
             "probability": round(prob, 3),
-            "edge_pct": round(edge_pct, 1),
+            "edge_pct": round((prob * decimal_odds - 1) * 100, 1),
             "stake": round(stake),
-            "reason": "LLM不可用，使用正期望规则兜底",
+            "reason": "LLM不可用，按强信号小仓试单兜底",
         })
-        if bankroll and (bankroll - remaining) / bankroll >= 0.35:
+        if bankroll and (bankroll - remaining) / bankroll >= 0.18:
             break
     return {
         "summary": f"{reason}；已使用数学规则兜底生成模拟计划。",
