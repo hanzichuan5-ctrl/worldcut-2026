@@ -246,6 +246,7 @@
             <button type="button" class="primary" id="autoBetBtn" onclick="llmAutoPlaceBets({manual:true})">立即 LLM 下注</button>
             <button type="button" onclick="toggleLedger()">查看持仓</button>
             <button type="button" onclick="toggleLlmHistory()">LLM 历史</button>
+            <button type="button" onclick="settleSimAccount()">结算赛果</button>
             <button type="button" onclick="resetSimAccount()">清空模拟账户</button>
           </div>
           <div class="sim-ledger" id="simLedger"></div>
@@ -722,13 +723,28 @@ function applyLlmBetPlan(plan, options={}){
     if (existing.has(key)) continue;
     const stake = Math.min(Math.round(Number(parlay.stake || 0)), Math.floor(simAccount.cash));
     if (stake <= 0 || !Array.isArray(parlay.legs) || parlay.legs.length < 2) continue;
-    const combinedOdds = Number(parlay.combined_odds || parlay.legs.reduce((acc, leg) => acc * Number(leg.odds || 1), 1));
+    const legs = parlay.legs.map(leg => {
+      const match = matchById(leg.id);
+      if (!match || !['主胜','平局','客胜'].includes(leg.pick)) return null;
+      const odds = Number(leg.odds || decimalForPick(match, leg.pick));
+      return {
+        id: match.id,
+        match: `${match.home} vs ${match.away}`,
+        home: match.home,
+        away: match.away,
+        pick: leg.pick,
+        odds: Number(odds.toFixed(2))
+      };
+    }).filter(Boolean);
+    if (legs.length < 2) continue;
+    const combinedOdds = Number(parlay.combined_odds || legs.reduce((acc, leg) => acc * Number(leg.odds || 1), 1));
     simAccount.cash -= stake;
     simAccount.bets.push({
       key,
       id: key,
       type: 'parlay',
-      match: parlay.legs.map(leg => `${leg.id} ${leg.pick}`).join(' × '),
+      match: legs.map(leg => `${leg.match} ${leg.pick}`).join(' × '),
+      legs,
       pick: parlay.type || `${parlay.legs.length}串1`,
       odds: Number(combinedOdds.toFixed(2)),
       stake,
@@ -784,6 +800,22 @@ function toggleLlmHistory(){
   panel.classList.toggle('show');
   renderLlmHistory();
 }
+async function settleSimAccount(){
+  const source = document.getElementById('oddsSource');
+  if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>正在结算已完赛结果...';
+  try {
+    const res = await fetch('/api/sim/settle?account_id=global');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '结算失败');
+    simAccount = data.account || simAccount;
+    await saveSimAccount();
+    renderSimulation();
+    document.getElementById('simLedger')?.classList.add('show');
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>本次结算 ${data.settled || 0} 单，赛果源 ${data.results_count || 0} 场。`;
+  } catch (err) {
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>结算失败：${err.message}`;
+  }
+}
 function renderLlmHistory(){
   const panel = document.getElementById('llmHistory');
   if (!panel) return;
@@ -802,15 +834,15 @@ function renderLlmHistory(){
 }
 function renderSimAccount(){
   ensureSimAccount();
-  const locked = simAccount.bets.reduce((sum, bet) => sum + Number(bet.stake || 0), 0);
-  const potential = simAccount.bets.reduce((sum, bet) => sum + Number(bet.potentialProfit || 0), 0);
+  const locked = simAccount.bets.reduce((sum, bet) => ['已中','未中','已取消'].includes(bet.status) ? sum : sum + Number(bet.stake || 0), 0);
+  const realized = simAccount.bets.reduce((sum, bet) => sum + Number(bet.settledProfit || 0), 0);
   const account = document.getElementById('simAccount');
   if (account) {
     account.innerHTML = `
       <div class="sim-metric"><span>初始本金</span><b>${Math.round(simAccount.initial)}</b></div>
       <div class="sim-metric"><span>可用资金</span><b>${Math.round(simAccount.cash)}</b></div>
       <div class="sim-metric"><span>已投金额</span><b>${Math.round(locked)}</b></div>
-      <div class="sim-metric"><span>潜在盈利</span><b>${Math.round(potential)}</b></div>`;
+      <div class="sim-metric"><span>已实现盈亏</span><b>${Math.round(realized)}</b></div>`;
   }
   renderLedger();
   renderLlmHistory();
@@ -824,13 +856,19 @@ function renderLedger(){
   }
   ledger.innerHTML = `
     <div class="sim-ledger-row"><span>比赛</span><span>选择 / 赔率</span><span>下注 / 盈利</span><span>状态</span></div>
-    ${simAccount.bets.slice().reverse().map(bet => `
+    ${simAccount.bets.slice().reverse().map(bet => {
+      const profitText = bet.status === '已中' || bet.status === '未中'
+        ? `${bet.stake} / ${Number(bet.settledProfit || 0) >= 0 ? '+' : ''}${bet.settledProfit || 0}`
+        : `${bet.stake} / +${bet.potentialProfit}`;
+      const resultText = bet.result ? `<br>赛果 ${bet.result}` : bet.legResults ? `<br>${bet.legResults.map(leg => `${leg.match} ${leg.result}`).join('；')}` : '';
+      return `
       <div class="sim-ledger-row">
         <span><b>${bet.match}</b><br>${bet.placedAt}</span>
         <span>${bet.pick} · ${bet.odds}${bet.agent ? `<br>${bet.agent}` : ''}</span>
-        <span>${bet.stake} / +${bet.potentialProfit}</span>
-        <span>${bet.status}${bet.reason ? `<br>${bet.reason}` : ''}</span>
-      </div>`).join('')}`;
+        <span>${profitText}</span>
+        <span>${bet.status}${resultText}${bet.reason ? `<br>${bet.reason}` : ''}</span>
+      </div>`;
+    }).join('')}`;
 }
 function renderSimulation(){
   const visible = active === '全部' ? matches : matches.filter(m => m.d === active);
@@ -839,7 +877,9 @@ function renderSimulation(){
   const parlayByMatch = new Map();
   for (const bet of simAccount.bets || []) {
     if (bet.type !== 'parlay') continue;
-    const ids = String(bet.match || '').match(/tc-\d+/g) || [];
+    const ids = Array.isArray(bet.legs) && bet.legs.length
+      ? bet.legs.map(leg => String(leg.id))
+      : String(bet.match || '').match(/tc-\d+/g) || [];
     for (const id of ids) parlayByMatch.set(id, bet);
   }
   const latestDecisions = new Map(((llmBetHistory[0] && llmBetHistory[0].decisions) || []).map(item => [String(item.id), item]));

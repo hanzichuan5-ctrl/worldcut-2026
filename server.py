@@ -348,6 +348,139 @@ def save_sim_state(state: dict) -> dict:
     return safe_state
 
 
+def normalize_team_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(value or "").lower())
+
+
+def result_pick(home_score: int, away_score: int) -> str:
+    if home_score > away_score:
+        return "主胜"
+    if home_score == away_score:
+        return "平局"
+    return "客胜"
+
+
+def fetch_worldcup_results() -> dict:
+    try:
+        data = fetch_json_cached("https://worldcup26.ir/get/games", ttl_seconds=300)
+    except Exception:
+        return {}
+    results = {}
+    for game in data.get("games", []):
+        if str(game.get("finished", "")).upper() != "TRUE":
+            continue
+        try:
+            hs = int(game.get("home_score"))
+            away_s = int(game.get("away_score"))
+        except (TypeError, ValueError):
+            continue
+        home_en = game.get("home_team_name_en", "")
+        away_en = game.get("away_team_name_en", "")
+        home_fa = game.get("home_team_fa", "")
+        away_fa = game.get("away_team_fa", "")
+        item = {
+            "home": home_en,
+            "away": away_en,
+            "home_score": hs,
+            "away_score": away_s,
+            "pick": result_pick(hs, away_s),
+            "source": "worldcup26.ir",
+        }
+        for home, away in ((home_en, away_en), (home_fa, away_fa)):
+            key = f"{normalize_team_text(home)}-{normalize_team_text(away)}"
+            if key != "-":
+                results[key] = item
+    return results
+
+
+def match_result_for_bet(bet: dict, results: dict) -> dict | None:
+    text = bet.get("match", "")
+    parts = re.split(r"\s+vs\s+", text, flags=re.I)
+    if len(parts) != 2:
+        return None
+    candidates = [(parts[0], parts[1]), (TEAM_EN.get(parts[0].strip(), ""), TEAM_EN.get(parts[1].strip(), ""))]
+    for home, away in candidates:
+        key = f"{normalize_team_text(home)}-{normalize_team_text(away)}"
+        if key in results:
+            return results[key]
+    return None
+
+
+def settle_single_bet(bet: dict, result: dict, account: dict) -> bool:
+    bet["result"] = f"{result['home_score']}-{result['away_score']}"
+    if result["pick"] == bet.get("pick"):
+        bet["status"] = "已中"
+        payout = round(float(bet.get("stake", 0)) * float(bet.get("odds", 1)))
+        profit = payout - round(float(bet.get("stake", 0)))
+        bet["settledProfit"] = profit
+        account["cash"] = float(account.get("cash", 0)) + payout
+    else:
+        bet["status"] = "未中"
+        bet["settledProfit"] = -round(float(bet.get("stake", 0)))
+    return True
+
+
+def settle_parlay_bet(bet: dict, results: dict, account: dict) -> bool:
+    legs = bet.get("legs") if isinstance(bet.get("legs"), list) else []
+    if len(legs) < 2:
+        return False
+    settled_legs = []
+    for leg in legs:
+        result = match_result_for_bet(leg, results)
+        if not result:
+            return False
+        settled_legs.append((leg, result))
+    bet["legResults"] = [
+        {
+            "match": leg.get("match"),
+            "pick": leg.get("pick"),
+            "result": f"{result['home_score']}-{result['away_score']}",
+            "actual": result.get("pick"),
+        }
+        for leg, result in settled_legs
+    ]
+    all_hit = all(result.get("pick") == leg.get("pick") for leg, result in settled_legs)
+    if all_hit:
+        bet["status"] = "已中"
+        payout = round(float(bet.get("stake", 0)) * float(bet.get("odds", 1)))
+        bet["settledProfit"] = payout - round(float(bet.get("stake", 0)))
+        account["cash"] = float(account.get("cash", 0)) + payout
+    else:
+        bet["status"] = "未中"
+        bet["settledProfit"] = -round(float(bet.get("stake", 0)))
+    return True
+
+
+def settle_sim_account(account_id: str | None) -> dict:
+    state = get_sim_state(account_id or "global")
+    account = state.get("account") or {"initial": 10000, "cash": 10000, "bets": []}
+    bets = account.get("bets") if isinstance(account.get("bets"), list) else []
+    results = fetch_worldcup_results()
+    changed = 0
+    for bet in bets:
+        if bet.get("status") in ("已中", "未中", "已取消"):
+            continue
+        if bet.get("type") == "parlay":
+            if settle_parlay_bet(bet, results, account):
+                changed += 1
+            continue
+        result = match_result_for_bet(bet, results)
+        if not result:
+            continue
+        if settle_single_bet(bet, result, account):
+            changed += 1
+    state["account"] = account
+    if changed:
+        save_sim_state(state)
+    return {
+        "account_id": state.get("account_id"),
+        "settled": changed,
+        "results_count": len(results),
+        "account": account,
+        "updated_at": beijing_time(),
+    }
+
+
 def summarize_analysis(text: str) -> str:
     lines = [line.strip(" -•") for line in text.splitlines() if line.strip()]
     useful = [line for line in lines if any(word in line for word in ("结论", "推荐", "概率", "比分", "竞猜", "置信"))]
@@ -934,6 +1067,10 @@ class Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/sim/account":
             params = parse.parse_qs(parsed.query)
             json_response(self, 200, get_sim_state(params.get("account_id", [""])[0]))
+            return
+        if parsed.path == "/api/sim/settle":
+            params = parse.parse_qs(parsed.query)
+            json_response(self, 200, settle_sim_account(params.get("account_id", ["global"])[0]))
             return
         super().do_GET()
 
