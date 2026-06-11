@@ -160,6 +160,23 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS odds_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_key TEXT NOT NULL,
+                home TEXT,
+                away TEXT,
+                match_time TEXT,
+                match_no TEXT,
+                decimal_json TEXT NOT NULL,
+                source TEXT,
+                captured_at TEXT NOT NULL,
+                captured_ts REAL NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_odds_snapshots_match ON odds_snapshots(match_key, captured_ts DESC)")
 
 
 def cache_key(match: dict) -> str:
@@ -367,6 +384,86 @@ def save_sim_state(state: dict) -> dict:
 
 def normalize_team_text(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(value or "").lower())
+
+
+def odds_match_key(item: dict) -> str:
+    if item.get("match_no"):
+        return f"no:{item.get('match_no')}"
+    return f"{normalize_team_text(item.get('home'))}-{normalize_team_text(item.get('away'))}-{normalize_team_text(item.get('match_time'))}"
+
+
+def save_odds_snapshots(matches: list[dict], source: str) -> None:
+    if not matches:
+        return
+    now_ts = datetime.now(timezone.utc).timestamp()
+    now_text = beijing_time()
+    rows = []
+    with sqlite3.connect(DB_PATH) as conn:
+        for item in matches:
+            key = odds_match_key(item)
+            decimal = item.get("decimal") or []
+            if len(decimal) < 3:
+                continue
+            previous = conn.execute(
+                "SELECT decimal_json FROM odds_snapshots WHERE match_key = ? ORDER BY captured_ts DESC LIMIT 1",
+                (key,),
+            ).fetchone()
+            current_json = json.dumps([round(float(value), 4) for value in decimal], ensure_ascii=False)
+            if previous and previous[0] == current_json:
+                continue
+            rows.append((
+                key,
+                item.get("home", ""),
+                item.get("away", ""),
+                item.get("match_time", ""),
+                item.get("match_no", ""),
+                current_json,
+                source,
+                now_text,
+                now_ts,
+            ))
+        if rows:
+            conn.executemany(
+                """
+                INSERT INTO odds_snapshots (
+                    match_key, home, away, match_time, match_no, decimal_json, source, captured_at, captured_ts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+
+def get_odds_trends(matches: list[dict], limit: int = 12) -> dict:
+    trends = {}
+    if not matches:
+        return trends
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        for item in matches:
+            key = odds_match_key(item)
+            rows = conn.execute(
+                """
+                SELECT decimal_json, captured_at, captured_ts
+                FROM odds_snapshots
+                WHERE match_key = ?
+                ORDER BY captured_ts DESC
+                LIMIT ?
+                """,
+                (key, limit),
+            ).fetchall()
+            points = []
+            for row in reversed(rows):
+                try:
+                    decimal = json.loads(row["decimal_json"])
+                except json.JSONDecodeError:
+                    continue
+                points.append({
+                    "decimal": decimal,
+                    "captured_at": row["captured_at"],
+                    "captured_ts": row["captured_ts"],
+                })
+            trends[key] = points
+    return trends
 
 
 def result_pick(home_score: int, away_score: int) -> str:
@@ -1036,7 +1133,7 @@ def sporttery_fetch_payload() -> tuple[dict | None, str, str]:
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
-            }, ttl_seconds=600, timeout_seconds=8, proxy_url=SPORTTERY_HTTP_PROXY if use_proxy else "")
+            }, ttl_seconds=60, timeout_seconds=8, proxy_url=SPORTTERY_HTTP_PROXY if use_proxy else "")
             return unwrap_proxy_json(data), url, ""
         except Exception as exc:
             errors.append(f"{url}: {str(exc)[:180]}")
@@ -1058,6 +1155,11 @@ def sporttery_odds_snapshot() -> dict:
             "official_url": SPORTTERY_OFFICIAL_URL,
         }
     matches = parse_sporttery_matches(data)
+    if matches:
+        save_odds_snapshots(matches, "中国体育彩票竞彩网")
+    trends = get_odds_trends(matches)
+    for item in matches:
+        item["trend"] = trends.get(odds_match_key(item), [])
     return {
         "source": "中国体育彩票竞彩网",
         "source_url": url,

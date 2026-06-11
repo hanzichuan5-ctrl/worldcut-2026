@@ -421,6 +421,7 @@ function sportteryToMatch(item, idx){
     venue: `${item.league || '世界杯'} · 中国体育彩票`,
     odds: item.american || decimal.map(decimalToAmerican),
     oddsDecimal: decimal,
+    oddsTrend: item.trend || [],
     oddsSource: '中国体育彩票竞彩网固定奖金',
     pick: pick.pick,
     api: pick.api,
@@ -438,43 +439,49 @@ function decimalOddsLabel(match, idx){
   const decimal = match.oddsDecimal?.[idx] || americanToDecimal(match.odds[idx]);
   return Number(decimal).toFixed(2);
 }
-function impliedPercent(odds){
-  const decimal = americanToDecimal(odds);
+function impliedPercentFromDecimal(decimal){
   return Math.round((1 / decimal) * 1000) / 10;
 }
-function simulatedOddsSeries(match, idx){
-  const current = match.odds[idx];
-  const sign = idx === pickIndex(match) ? -1 : 1;
-  const spread = 12 + ((match.id + idx * 7) % 18);
-  return [
-    current + sign * spread,
-    current + sign * Math.round(spread * 0.45),
-    current
-  ];
+function impliedPercent(odds){
+  return impliedPercentFromDecimal(americanToDecimal(odds));
+}
+function oddsTrendSeries(match, idx){
+  const real = (match.oddsTrend || [])
+    .map(point => ({decimal: Number(point.decimal?.[idx]), captured_at: point.captured_at}))
+    .filter(point => Number.isFinite(point.decimal) && point.decimal > 1);
+  if (real.length) return real;
+  const current = match.oddsDecimal?.[idx] || americanToDecimal(match.odds[idx]);
+  return [{decimal: current, captured_at: '当前'}];
 }
 function renderSparkline(values, color){
-  const probs = values.map(impliedPercent);
+  const probs = values.map(point => impliedPercentFromDecimal(point.decimal));
   const min = Math.min(...probs);
   const max = Math.max(...probs);
   const range = Math.max(1, max - min);
   const points = probs.map((p, i) => {
-    const x = 4 + i * 46;
+    const x = values.length === 1 ? 50 : 4 + i * (92 / Math.max(1, values.length - 1));
     const y = 34 - ((p - min) / range) * 26;
     return `${x},${y}`;
   }).join(' ');
-  return `<svg viewBox="0 0 100 42" aria-hidden="true"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline><circle cx="96" cy="${points.split(' ').at(-1).split(',')[1]}" r="3.5" fill="${color}"></circle></svg>`;
+  const last = points.split(' ').at(-1).split(',');
+  return `<svg viewBox="0 0 100 42" aria-hidden="true"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline><circle cx="${last[0]}" cy="${last[1]}" r="3.5" fill="${color}"></circle></svg>`;
 }
 function renderOddsTrend(match){
   const labels = [`${match.home}胜`, '平局', `${match.away}胜`];
   const colors = ['#13795b', '#b8871e', '#2366a8'];
   const isSporttery = match.oddsSource === '中国体育彩票竞彩网固定奖金';
+  const trendCount = (match.oddsTrend || []).length;
   return `
     <div class="odds-trend">
-      <div class="odds-trend-head"><b>赔率走势</b><span>${isSporttery ? '体彩固定奖金：当前值，走势暂用近似线' : '静态兜底：开盘 / 昨日 / 当前为模拟走势'}</span></div>
+      <div class="odds-trend-head"><b>赔率走势</b><span>${isSporttery ? `真实体彩快照：${trendCount || 1} 个点${trendCount <= 1 ? '，暂无变化' : ''}` : '静态兜底：暂无真实历史'}</span></div>
       <div class="trend-grid">
         ${labels.map((label, idx) => {
-          const series = simulatedOddsSeries(match, idx);
-          return `<div class="trend-card"><span>${label}</span>${renderSparkline(series, colors[idx])}<div class="trend-now">${oddsLabel(series[2])} · ${impliedPercent(series[2])}%</div></div>`;
+          const series = oddsTrendSeries(match, idx);
+          const current = series.at(-1);
+          const first = series[0];
+          const delta = series.length > 1 ? current.decimal - first.decimal : 0;
+          const deltaText = delta ? ` · ${delta > 0 ? '+' : ''}${delta.toFixed(2)}` : '';
+          return `<div class="trend-card"><span>${label}</span>${renderSparkline(series, colors[idx])}<div class="trend-now">${current.decimal.toFixed(2)} · ${impliedPercentFromDecimal(current.decimal)}%${deltaText}</div></div>`;
         }).join('')}
       </div>
     </div>`;
