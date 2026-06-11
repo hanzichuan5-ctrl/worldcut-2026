@@ -874,12 +874,36 @@ def conf_from_prob(prob: int) -> str:
     return "中"
 
 
-def score_from_pick(api_pick: str) -> str:
-    if api_pick == "主胜":
-        return "2-1"
-    if api_pick == "客胜":
-        return "1-2"
-    return "1-1"
+def score_from_market(api_pick: str, probs: list[int]) -> str:
+    values = probs if isinstance(probs, list) and len(probs) == 3 else [34, 33, 33]
+    fav = max(values)
+    gap = fav - min(values)
+    draw = values[1] or 0
+    open_game = draw < 24
+    if api_pick == "平局":
+        if draw >= 34:
+            return "1-1"
+        return "2-2" if open_game else "0-0"
+    home_win = api_pick == "主胜"
+    winner = 2
+    loser = 1
+    opponent_prob = values[2] if home_win else values[0]
+    if fav >= 78 or gap >= 65:
+        winner = 4 if open_game else 3
+        loser = 1 if opponent_prob >= 16 else 0
+    elif fav >= 68 or gap >= 48:
+        winner = 3
+        loser = 1 if opponent_prob >= 18 else 0
+    elif opponent_prob <= 18:
+        winner = 2
+        loser = 0
+    elif fav >= 58 or gap >= 32:
+        winner = 3 if open_game else 2
+        loser = 1
+    elif draw >= 30:
+        winner = 1
+        loser = 0
+    return f"{winner}-{loser}" if home_win else f"{loser}-{winner}"
 
 
 def cn_date(date_text: str) -> str:
@@ -913,7 +937,7 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "oddsSource": "中国体育彩票竞彩网固定奖金",
         "pick": pick,
         "api": api_pick,
-        "score": score_from_pick(api_pick),
+        "score": score_from_market(api_pick, probs),
         "conf": conf_from_prob(max(probs)),
         "probs": probs,
         "why": f"以中国体育彩票竞彩网当前固定奖金为主数据源。{api_pick}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。",

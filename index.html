@@ -372,10 +372,36 @@ function confFromProb(prob){
   if (prob >= 55) return '中高';
   return '中';
 }
-function scoreFromPick(api){
-  if (api === '主胜') return '2-1';
-  if (api === '客胜') return '1-2';
-  return '1-1';
+function scoreFromMarket(api, probs){
+  const p = Array.isArray(probs) ? probs : [34, 33, 33];
+  const fav = Math.max(...p);
+  const gap = fav - Math.min(...p);
+  const draw = p[1] || 0;
+  const openGame = draw < 24;
+  if (api === '平局') {
+    if (draw >= 34) return '1-1';
+    return openGame ? '2-2' : '0-0';
+  }
+  const homeWin = api === '主胜';
+  let winner = 2;
+  let loser = 1;
+  if (fav >= 78 || gap >= 65) {
+    winner = openGame ? 4 : 3;
+    loser = p[homeWin ? 2 : 0] >= 16 ? 1 : 0;
+  } else if (fav >= 68 || gap >= 48) {
+    winner = 3;
+    loser = p[homeWin ? 2 : 0] >= 18 ? 1 : 0;
+  } else if (p[homeWin ? 2 : 0] <= 18) {
+    winner = 2;
+    loser = 0;
+  } else if (fav >= 58 || gap >= 32) {
+    winner = openGame ? 3 : 2;
+    loser = 1;
+  } else if (draw >= 30) {
+    winner = 1;
+    loser = 0;
+  }
+  return homeWin ? `${winner}-${loser}` : `${loser}-${winner}`;
 }
 function refreshDateFilters(){
   dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
@@ -398,7 +424,7 @@ function sportteryToMatch(item, idx){
     oddsSource: '中国体育彩票竞彩网固定奖金',
     pick: pick.pick,
     api: pick.api,
-    score: scoreFromPick(pick.api),
+    score: scoreFromMarket(pick.api, probs),
     conf: confFromProb(Math.max(...probs)),
     probs,
     why: `以中国体育彩票竞彩网当前固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
