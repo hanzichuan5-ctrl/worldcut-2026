@@ -717,6 +717,29 @@ function applyLlmBetPlan(plan, options={}){
     });
     placed++;
   }
+  for (const parlay of plan.parlays || []) {
+    const key = `parlay:${(parlay.legs || []).map(leg => `${leg.id}-${leg.pick}`).join('|')}`;
+    if (existing.has(key)) continue;
+    const stake = Math.min(Math.round(Number(parlay.stake || 0)), Math.floor(simAccount.cash));
+    if (stake <= 0 || !Array.isArray(parlay.legs) || parlay.legs.length < 2) continue;
+    const combinedOdds = Number(parlay.combined_odds || parlay.legs.reduce((acc, leg) => acc * Number(leg.odds || 1), 1));
+    simAccount.cash -= stake;
+    simAccount.bets.push({
+      key,
+      id: key,
+      type: 'parlay',
+      match: parlay.legs.map(leg => `${leg.id} ${leg.pick}`).join(' × '),
+      pick: parlay.type || `${parlay.legs.length}串1`,
+      odds: Number(combinedOdds.toFixed(2)),
+      stake,
+      potentialProfit: Math.round(stake * (combinedOdds - 1)),
+      reason: parlay.reason || 'LLM 串关模拟下注',
+      placedAt: new Date().toLocaleString('zh-CN', {hour12: false}),
+      status: '待赛',
+      agent: 'LLM'
+    });
+    placed++;
+  }
   recordLlmBetPlan(plan, placed, options.manual);
   if (options.signature) lastAutoBetSignature = options.signature;
   saveSimAccount();
@@ -731,6 +754,7 @@ function recordLlmBetPlan(plan, placed, manual=false){
     time: new Date().toLocaleString('zh-CN', {hour12: false}),
     mode: manual ? '手动触发' : '赔率更新自动触发',
     summary: plan.summary || '',
+    planMode: plan.mode || '',
     model: plan.model || '',
     placed,
     bets: (plan.bets || []).map(bet => ({
@@ -740,6 +764,7 @@ function recordLlmBetPlan(plan, placed, manual=false){
       edge_pct: bet.edge_pct,
       reason: bet.reason
     })),
+    parlays: plan.parlays || [],
     decisions: plan.decisions || []
   });
   llmBetHistory = llmBetHistory.slice(0, 20);
@@ -769,8 +794,9 @@ function renderLlmHistory(){
   panel.innerHTML = llmBetHistory.slice(0, 10).map(item => `
     <div class="llm-history-item">
       <b>${item.time} · ${item.mode} · 新增 ${item.placed} 单</b>
-      <div>${item.summary || '无摘要'}${item.model ? ` · ${item.model}` : ''}</div>
+      <div>${item.summary || '无摘要'}${item.planMode ? ` · 模式 ${item.planMode}` : ''}${item.model ? ` · ${item.model}` : ''}</div>
       <div>${(item.bets || []).slice(0, 5).map(bet => `${bet.id} ${bet.pick} ${bet.stake || 0}，优势 ${bet.edge_pct || 0}%`).join('；') || '无下注'}</div>
+      <div>${(item.parlays || []).slice(0, 3).map(parlay => `${parlay.type} ${parlay.stake || 0}，赔率 ${parlay.combined_odds || '-'}`).join('；')}</div>
       <div>${(item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.pick}：${decision.reason || '无理由'}`).join('；')}</div>
     </div>`).join('');
 }
@@ -810,6 +836,12 @@ function renderSimulation(){
   const visible = active === '全部' ? matches : matches.filter(m => m.d === active);
   let totalStake = 0, totalProfit = 0, count = 0;
   const activeBets = new Map((simAccount.bets || []).map(bet => [String(bet.id), bet]));
+  const parlayByMatch = new Map();
+  for (const bet of simAccount.bets || []) {
+    if (bet.type !== 'parlay') continue;
+    const ids = String(bet.match || '').match(/tc-\d+/g) || [];
+    for (const id of ids) parlayByMatch.set(id, bet);
+  }
   const latestDecisions = new Map(((llmBetHistory[0] && llmBetHistory[0].decisions) || []).map(item => [String(item.id), item]));
   for (const match of visible) {
     const el = document.getElementById(`sim-${match.id}`);
@@ -820,6 +852,11 @@ function renderSimulation(){
       totalProfit += Number(llmBet.potentialProfit || 0);
       count++;
       el.innerHTML = `<b>LLM 持仓：</b>${llmBet.pick}，赔率 ${llmBet.odds}，下注 ${llmBet.stake}，潜在盈利 ${llmBet.potentialProfit}。${llmBet.reason || ''}`;
+      continue;
+    }
+    const parlayBet = parlayByMatch.get(String(match.id));
+    if (parlayBet) {
+      el.innerHTML = `<b>LLM 串关：</b>参与 ${parlayBet.pick}，合成赔率 ${parlayBet.odds}，本单下注 ${parlayBet.stake}。${parlayBet.reason || ''}`;
       continue;
     }
     const decision = latestDecisions.get(String(match.id));

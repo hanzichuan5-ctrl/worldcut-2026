@@ -1063,9 +1063,13 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
     min_edge_pct = float(settings.get("minEdgePct") or 2)
     compact = []
     for match in matches[:40]:
+        kickoff_status = kickoff_gate(match)
         compact.append({
             "id": match.get("id"),
             "date": match.get("d"),
+            "kickoff": match.get("time") or match.get("d"),
+            "betting_allowed": kickoff_status["allowed"],
+            "time_note": kickoff_status["reason"],
             "match": f"{match.get('home')} vs {match.get('away')}",
             "home": match.get("home"),
             "away": match.get("away"),
@@ -1084,6 +1088,9 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 - 这是模拟盘，不是真实下注。
 - 不得编造伤病、裁判、新闻、大名单；缺失信息视为风险，降低下注金额。
 - 只允许选择 主胜、平局、客胜 或 跳过。
+- 你自己选择下注模式：单关、2串1、3串1、混合、全部跳过。
+- 只能下注 betting_allowed=true 的比赛；已开赛或开赛前30分钟内必须跳过。
+- 串关最多3场，不能包含 betting_allowed=false 的比赛。
 - 单场下注不能超过可用资金的 {max_stake_pct}%。
 - 体彩固定奖金天然含水位，页面概率多为盘口隐含概率归一化；不要机械要求每场都有严格数学正期望。
 - 优先选择 3-6 场强信号小仓试单，除非整批比赛确实没有任何清晰倾向。
@@ -1103,6 +1110,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 <json>
 {{
   "summary": "一句话说明整体策略",
+  "mode": "单关|2串1|3串1|混合|全部跳过",
   "decisions": [
     {{
       "id": "比赛id",
@@ -1123,6 +1131,16 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
       "stake": 120,
       "reason": "20-50字中文理由"
     }}
+  ],
+  "parlays": [
+    {{
+      "type": "2串1|3串1",
+      "legs": [
+        {{"id": "比赛id", "pick": "主胜|平局|客胜"}}
+      ],
+      "stake": 80,
+      "reason": "20-80字中文理由"
+    }}
   ]
 }}
 </json>
@@ -1134,8 +1152,10 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         summary = f"LLM API 错误 {exc.code}: {detail[:180]}"
         return {
             "summary": summary,
+            "mode": "全部跳过",
             "decisions": error_decisions(matches, summary),
             "bets": [],
+            "parlays": [],
             "model": MODEL,
             "generated_at": beijing_time(),
             "error": True,
@@ -1144,14 +1164,17 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         summary = f"LLM 自动下注计划解析失败：{exc}"
         return {
             "summary": summary,
+            "mode": "全部跳过",
             "decisions": error_decisions(matches, summary),
             "bets": [],
+            "parlays": [],
             "model": MODEL,
             "generated_at": beijing_time(),
             "error": True,
         }
 
     match_ids = {str(match.get("id")) for match in matches}
+    match_by_id = {str(match.get("id")): match for match in matches}
     decisions_by_id = {}
     raw_decisions = plan.get("decisions") if isinstance(plan.get("decisions"), list) else []
     for item in raw_decisions:
@@ -1186,6 +1209,8 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
     for item in plan.get("bets", []):
         if str(item.get("id")) not in match_ids:
             continue
+        if not kickoff_gate(match_by_id[str(item.get("id"))])["allowed"]:
+            continue
         pick = item.get("pick")
         if pick not in ("主胜", "平局", "客胜"):
             continue
@@ -1201,13 +1226,89 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
         if str(item.get("id")) in decisions_by_id:
             decisions_by_id[str(item.get("id"))]["pick"] = pick
             decisions_by_id[str(item.get("id"))]["stake"] = round(stake)
+    safe_parlays = []
+    for parlay in plan.get("parlays", []) if isinstance(plan.get("parlays"), list) else []:
+        legs = []
+        combined_odds = 1.0
+        for leg in parlay.get("legs", [])[:3]:
+            mid = str(leg.get("id"))
+            pick = leg.get("pick")
+            if mid not in match_by_id or pick not in ("主胜", "平局", "客胜"):
+                continue
+            if not kickoff_gate(match_by_id[mid])["allowed"]:
+                continue
+            odds = decimal_odds_for_pick(match_by_id[mid], pick)
+            if not odds:
+                continue
+            combined_odds *= odds
+            legs.append({"id": match_by_id[mid].get("id"), "pick": pick, "odds": round(odds, 2)})
+        if len(legs) not in (2, 3):
+            continue
+        try:
+            stake = max(0, min(float(parlay.get("stake") or 0), max_single, remaining))
+        except (TypeError, ValueError):
+            stake = 0
+        if stake <= 0:
+            continue
+        remaining -= stake
+        safe_parlays.append({
+            "type": f"{len(legs)}串1",
+            "legs": legs,
+            "combined_odds": round(combined_odds, 2),
+            "stake": round(stake),
+            "reason": str(parlay.get("reason") or "LLM 串关模拟下注")[:160],
+        })
     return {
         "summary": str(plan.get("summary") or "LLM 已生成模拟下注计划。"),
+        "mode": plan.get("mode") or "单关",
         "decisions": list(decisions_by_id.values()),
         "bets": safe_bets,
+        "parlays": safe_parlays,
         "model": MODEL,
         "generated_at": beijing_time(),
     }
+
+
+def parse_beijing_kickoff(match: dict) -> datetime | None:
+    value = str(match.get("time") or match.get("match_time") or "")
+    parsed = re.search(r"(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})", value)
+    if not parsed:
+        return None
+    year, month, day, hour, minute = map(int, parsed.groups())
+    return datetime(year, month, day, hour, minute, tzinfo=BEIJING_TZ)
+
+
+def kickoff_gate(match: dict) -> dict:
+    kickoff = parse_beijing_kickoff(match)
+    if not kickoff:
+        return {"allowed": True, "reason": "未能解析开赛时间，按可下注处理但需复核。"}
+    now = datetime.now(BEIJING_TZ)
+    cutoff = kickoff - timedelta(minutes=30)
+    if now >= kickoff:
+        return {"allowed": False, "reason": "比赛已开赛，禁止下注。"}
+    if now >= cutoff:
+        return {"allowed": False, "reason": "距离开赛不足30分钟，禁止下注。"}
+    return {"allowed": True, "reason": f"距离开赛约{int((kickoff - now).total_seconds() // 60)}分钟。"}
+
+
+def decimal_odds_for_pick(match: dict, pick: str) -> float | None:
+    idx = {"主胜": 0, "平局": 1, "客胜": 2}.get(pick)
+    if idx is None:
+        return None
+    decimal = match.get("oddsDecimal") or []
+    if len(decimal) > idx:
+        try:
+            return float(decimal[idx])
+        except (TypeError, ValueError):
+            return None
+    american = match.get("odds") or []
+    if len(american) <= idx:
+        return None
+    try:
+        odds = float(american[idx])
+    except (TypeError, ValueError):
+        return None
+    return 1 + (100 / abs(odds)) if odds < 0 else 1 + (odds / 100)
 
 
 def error_decisions(matches: list[dict], reason: str) -> list[dict]:
