@@ -140,6 +140,18 @@
     .odds-import { display: none; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0 0; }
     .odds-import.show { display: block; }
     .odds-import textarea { width: 100%; min-height: 120px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .results-panel { background: #f0f7f4; border: 1px solid var(--line); border-radius: 8px; margin: 0 0 18px; overflow: hidden; }
+    .results-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px 14px; }
+    .results-head h2 { margin: 0; font-size: 22px; }
+    .results-head p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+    .results-summary { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 0 18px 14px; color: var(--muted); font-size: 14px; }
+    .results-summary b { color: var(--ink); }
+    .results-list { border-top: 1px solid var(--line); background: #fff; }
+    .result-row { display: grid; grid-template-columns: 1.2fr .5fr .8fr .8fr .8fr; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.45; align-items: center; }
+    .result-row:first-child { border-top: 0; background: #f7f4ec; font-weight: 800; color: var(--muted); font-size: 13px; }
+    .result-row .hit { color: #13795b; font-weight: 700; }
+    .result-row .miss { color: #c0392b; font-weight: 700; }
+    .result-row .skip { color: var(--muted); }
     .odds-import-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
     .jump-sim { background: var(--accent); color: #fff; border-color: transparent; }
     .odds-trend { border-top: 1px solid var(--line); background: #fffaf0; padding: 12px 16px 14px; }
@@ -187,6 +199,7 @@
       .odds-source button, .odds-import-actions button { width: 100%; }
       .trend-grid { grid-template-columns: 1fr; }
       .trend-card { display: grid; grid-template-columns: 76px 1fr 54px; align-items: center; gap: 8px; }
+      .result-row { grid-template-columns: 1fr; gap: 3px; padding: 10px 15px; }
       .trend-card span, .trend-card .trend-now { margin: 0; }
       .trend-card svg { height: 34px; }
       .ai-result pre { max-height: 420px; padding: 12px; }
@@ -259,6 +272,17 @@
           <div class="llm-history" id="llmHistory"></div>
           <div class="post-review" id="postReview"></div>
         </div>
+      </section>
+
+      <section class="results-panel" id="resultsPanel" aria-label="赛果与预测评估">
+        <div class="results-head">
+          <div>
+            <h2>赛果与预测评估</h2>
+            <p>已完赛结果 vs LLM 赛前预测，自动匹配预测记录并计算命中率。</p>
+          </div>
+        </div>
+        <div class="results-summary" id="resultsSummary">正在加载赛果数据...</div>
+        <div class="results-list" id="resultsList"></div>
       </section>
 
       <section class="rules" aria-label="判断评分规则">
@@ -586,8 +610,9 @@ async function refreshSportteryOdds(){
     let applied = 0;
     if (data.status === 'ok') applied = applySportteryItems(data.matches || []);
     if (source) {
+      const filteredText = data.filtered_finished_count ? `，已移出已完赛 ${data.filtered_finished_count} 场` : '';
       const statusText = data.status === 'ok'
-        ? `已接入中国体育彩票竞彩网固定奖金，已切换为体彩售卖列表 ${applied} 场。`
+        ? `已接入中国体育彩票竞彩网固定奖金，已切换为待赛体彩列表 ${applied} 场${filteredText}。`
         : `体彩源当前不可用：${data.note || data.status || '未知状态'}；可点“导入体彩 JSON”手动导入，页面先使用静态兜底赔率。`;
       source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusText}`;
     }
@@ -721,16 +746,20 @@ function simulateMatch(match){
 function matchById(id){
   return matches.find(match => String(match.id) === String(id));
 }
+function pendingMatches(){
+  return matches.filter(match => !match.finished);
+}
 function decimalForPick(match, pick){
   const idx = pick === '主胜' ? 0 : pick === '平局' ? 1 : 2;
   return americanToDecimal(match.odds[idx]);
 }
 function oddsSignature(){
-  return `${AUTO_BET_STRATEGY_VERSION}|${matches.map(match => `${match.id}:${match.home}-${match.away}:${(match.odds || []).join('/')}`).join('|')}`;
+  const activeMatches = pendingMatches();
+  return `${AUTO_BET_STRATEGY_VERSION}|${activeMatches.map(match => `${match.id}:${match.home}-${match.away}:${(match.odds || []).join('/')}`).join('|')}`;
 }
 function maybeAutoLlmBet(){
   const signature = oddsSignature();
-  if (!matches.length || !signature || signature === lastAutoBetSignature) return;
+  if (!pendingMatches().length || !signature || signature === lastAutoBetSignature) return;
   llmAutoPlaceBets({manual:false, signature});
 }
 async function llmAutoPlaceBets(options={}){
@@ -749,7 +778,7 @@ async function llmAutoPlaceBets(options={}){
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        matches,
+        matches: pendingMatches(),
         settings: {
           bankroll: simAccount.initial,
           cash: simAccount.cash,
@@ -1169,7 +1198,7 @@ function applyAiResult(data){
   status.textContent = `${data.generated_at || ''}${data.cached ? ' · 缓存' : ''} · ${data.model || '未知模型'}`;
 }
 async function refreshAllAi(){
-  for (const match of matches) {
+  for (const match of pendingMatches()) {
     await fetchAndApply(match);
     await new Promise(resolve => setTimeout(resolve, 250));
   }
@@ -1199,6 +1228,53 @@ renderFilters(); render();
     renderSimulation();
   });
 });
+async function loadResults(){
+  try {
+    const res = await fetch('/api/results');
+    const data = await res.json();
+    const summary = document.getElementById('resultsSummary');
+    const list = document.getElementById('resultsList');
+    if (!summary || !list) return;
+    if (!data.results || !data.results.length) {
+      summary.innerHTML = '<b>暂无已完赛数据。</b>世界杯开赛后这里会自动显示已结束比赛 vs 预测对比。';
+      list.innerHTML = '';
+      return;
+    }
+    const acc = data.accuracy != null ? `${data.accuracy}%` : '-';
+    const color = data.accuracy >= 67 ? '#13795b' : (data.accuracy >= 50 ? '#e67e22' : '#c0392b');
+    summary.innerHTML = `
+      <span>已完赛 <b>${data.total_finished}</b> 场</span>
+      <span>有预测 <b>${data.total_predicted}</b> 场</span>
+      <span>命中 <b class="hit">${data.hits}</b></span>
+      <span>未中 <b class="miss">${data.misses}</b></span>
+      <span>命中率 <b style="color:${color}">${acc}</b></span>
+      <span style="color:var(--muted);font-size:12px">${data.generated_at || ''}</span>
+    `;
+    const header = `<div class="result-row"><div>比赛</div><div>比分</div><div>预测比分</div><div>预测方向</div><div>结果</div></div>`;
+    const rows = data.results.map(r => {
+      const teams = r.home === r.home_en ? r.home : `${r.home} <span style="color:var(--muted);font-size:12px">${r.home_en}</span>`;
+      const away = r.away === r.away_en ? r.away : `${r.away} <span style="color:var(--muted);font-size:12px">${r.away_en}</span>`;
+      let resultCell = '';
+      if (r.pick_hit === true) resultCell = '<span class="hit">✅ 命中</span>';
+      else if (r.pick_hit === false) resultCell = '<span class="miss">❌ 未中</span>';
+      else resultCell = '<span class="skip">⚪ 无预测</span>';
+      return `<div class="result-row">
+        <div><strong>${teams}</strong> <span class="vs">vs</span> <strong>${away}</strong></div>
+        <div><strong>${r.actual_score}</strong></div>
+        <div>${r.predicted_score || '-'}</div>
+        <div>${r.predicted_pick || '-'}</div>
+        <div>${resultCell}</div>
+      </div>`;
+    }).join('');
+    list.innerHTML = header + rows;
+  } catch (err) {
+    const summary = document.getElementById('resultsSummary');
+    if (summary) summary.innerHTML = `<b>加载赛果失败：</b>${err.message}`;
+  }
+}
+loadResults();
+setInterval(loadResults, 5 * 60 * 1000);
+
 async function boot(){
   try {
     await loadServerSimState();

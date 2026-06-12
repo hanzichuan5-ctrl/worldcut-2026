@@ -14,9 +14,15 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib import request, error, parse
 
+try:
+    from ddgs import DDGS
+    HAS_DDGS = True
+except ImportError:
+    HAS_DDGS = False
+
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "prediction_history.sqlite3"
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
 BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com").rstrip("/")
 SEARCH_API_URL = os.getenv("SEARCH_API_URL", "").strip()
 APIFOOTBALL_API_KEY = os.getenv("APIFOOTBALL_API_KEY", "").strip()
@@ -191,6 +197,21 @@ def match_id_key(match: dict) -> str:
 def get_prediction(api_key: str, match: dict) -> dict:
     key = cache_key(match)
     match_id = match_id_key(match)
+    finished = finished_result_for_match(match)
+    if finished:
+        score = f"{finished['home_score']}-{finished['away_score']}"
+        return {
+            "id": match.get("id"),
+            "analysis": f"这场比赛已经完赛，赛果 {score}，结果为{finished['pick']}。已完赛场次不再生成赛前预测，也不会进入自动下注。",
+            "summary": f"已完赛：{score}，{finished['pick']}。不再预测。",
+            "actual_score": score,
+            "actual_pick": finished["pick"],
+            "finished": True,
+            "source": finished.get("source", ""),
+            "model": MODEL,
+            "generated_at": beijing_time(),
+            "cached": False,
+        }
     now = datetime.now(timezone.utc).timestamp()
     cached = PREDICTION_CACHE.get(key)
     if cached and now - cached["ts"] < CACHE_TTL_SECONDS:
@@ -280,7 +301,7 @@ def save_prediction(match: dict, payload: dict) -> None:
 
 
 def get_history(match_id: str | None = None, limit: int = 50) -> list[dict]:
-    limit = max(1, min(limit, 200))
+    limit = max(1, min(limit, 5000))
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         if match_id:
@@ -384,6 +405,57 @@ def save_sim_state(state: dict) -> dict:
 
 def normalize_team_text(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(value or "").lower())
+
+
+EXTRA_CN_TO_EN = {
+    "韩国": "South Korea",
+    "捷克": "Czech Republic",
+    "厄瓜多尔": "Ecuador",
+    "土耳其": "Turkey",
+    "瑞典": "Sweden",
+    "约旦": "Jordan",
+    "巴拿马": "Panama",
+    "伊拉克": "Iraq",
+    "波黑": "Bosnia and Herzegovina",
+    "库拉索": "Curacao",
+    "刚果金": "Democratic Republic of the Congo",
+}
+EN_TO_CN = {v.lower(): k for k, v in {**TEAM_EN, **EXTRA_CN_TO_EN}.items()}
+
+
+def team_name_candidates(name: str) -> list[str]:
+    raw = str(name or "").strip()
+    candidates = [raw]
+    if raw in TEAM_EN:
+        candidates.append(TEAM_EN[raw])
+    if raw in EXTRA_CN_TO_EN:
+        candidates.append(EXTRA_CN_TO_EN[raw])
+    cn = EN_TO_CN.get(raw.lower())
+    if cn:
+        candidates.append(cn)
+    seen = set()
+    result = []
+    for item in candidates:
+        normalized = normalize_team_text(item)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(item)
+    return result
+
+
+def match_result_for_teams(home: str, away: str, results: dict) -> dict | None:
+    for home_try in team_name_candidates(home):
+        for away_try in team_name_candidates(away):
+            key = f"{normalize_team_text(home_try)}-{normalize_team_text(away_try)}"
+            if key in results:
+                return results[key]
+    return None
+
+
+def finished_result_for_match(match: dict) -> dict | None:
+    if match.get("finished_result"):
+        return match.get("finished_result")
+    return match_result_for_teams(match.get("home", ""), match.get("away", ""), fetch_worldcup_results())
 
 
 def odds_match_key(item: dict) -> str:
@@ -512,12 +584,7 @@ def match_result_for_bet(bet: dict, results: dict) -> dict | None:
     parts = re.split(r"\s+vs\s+", text, flags=re.I)
     if len(parts) != 2:
         return None
-    candidates = [(parts[0], parts[1]), (TEAM_EN.get(parts[0].strip(), ""), TEAM_EN.get(parts[1].strip(), ""))]
-    for home, away in candidates:
-        key = f"{normalize_team_text(home)}-{normalize_team_text(away)}"
-        if key in results:
-            return results[key]
-    return None
+    return match_result_for_teams(parts[0], parts[1], results)
 
 
 def calculate_sim_stats(account: dict) -> dict:
@@ -832,17 +899,21 @@ def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, s
         ],
         "parlays": plan.get("parlays", [])[:10] if isinstance(plan.get("parlays"), list) else [],
         "decisions": plan.get("decisions", [])[:80] if isinstance(plan.get("decisions"), list) else [],
+        "error": bool(plan.get("error")),
+        "llm_debug": plan.get("llm_debug") if isinstance(plan.get("llm_debug"), dict) else {},
     })
     state["account"] = account
     state["history"] = history[:50]
     if not plan.get("error"):
         state["last_signature"] = signature
+    else:
+        state["last_signature"] = ""
     state["stats"] = calculate_sim_stats(account)
     state["worker"] = {
         "last_bet_at": beijing_time(),
         "last_bet_placed": placed,
         "last_bet_summary": plan.get("summary") or "",
-        "last_signature": signature if not plan.get("error") else state.get("last_signature", ""),
+        "last_signature": signature if not plan.get("error") else "",
     }
     save_sim_state(state)
     return {"placed": placed, "state": state}
@@ -864,6 +935,14 @@ def extract_predicted_score(text: str) -> str:
         if match:
             return match.group(1).strip().strip("*")
     return ""
+
+
+def normalize_score_text(value: str) -> str:
+    text = str(value or "")
+    match = re.search(r"(\d{1,2})\s*[-‐‑‒–—]\s*(\d{1,2})", text)
+    if match:
+        return f"{int(match.group(1))}-{int(match.group(2))}"
+    return text.strip()
 
 
 def strip_tags(value: str) -> str:
@@ -1154,7 +1233,16 @@ def sporttery_odds_snapshot() -> dict:
             "generated_at": beijing_time(),
             "official_url": SPORTTERY_OFFICIAL_URL,
         }
-    matches = parse_sporttery_matches(data)
+    parsed_matches = parse_sporttery_matches(data)
+    finished_results = fetch_worldcup_results()
+    matches = []
+    finished_count = 0
+    for item in parsed_matches:
+        finished = match_result_for_teams(item.get("home", ""), item.get("away", ""), finished_results)
+        if finished:
+            finished_count += 1
+            continue
+        matches.append(item)
     if matches:
         save_odds_snapshots(matches, "中国体育彩票竞彩网")
     trends = get_odds_trends(matches)
@@ -1164,9 +1252,10 @@ def sporttery_odds_snapshot() -> dict:
         "source": "中国体育彩票竞彩网",
         "source_url": url,
         "status": "ok" if matches else "no_matches_parsed",
-        "note": "固定奖金为十进制赔率，前端会换算成美式赔率用于原模拟盘。",
+        "note": "固定奖金为十进制赔率，前端会换算成美式赔率用于原模拟盘。已完赛场次会自动移出待预测列表。",
         "matches": matches[:200],
-        "raw_count": len(matches),
+        "raw_count": len(parsed_matches),
+        "filtered_finished_count": finished_count,
         "generated_at": beijing_time(),
         "official_url": SPORTTERY_OFFICIAL_URL,
     }
@@ -1190,32 +1279,53 @@ def sporttery_tool(home_cn: str, away_cn: str) -> list[dict]:
     }]
 
 
-def search_tool(query: str, limit: int = 3) -> list[dict]:
-    if not SEARCH_API_URL:
-        return [{
-            "query": query,
-            "status": "search_api_not_configured",
-            "note": "后端未配置 SEARCH_API_URL；LLM 只能使用页面快照和内置官方来源，不能假装已完成实时搜索。",
-        }]
-
-    url = SEARCH_API_URL + ("&" if "?" in SEARCH_API_URL else "?") + parse.urlencode({"q": query, "limit": limit})
-    req = request.Request(url, headers={"User-Agent": "worldcup-predictions/1.0"})
+def free_search(query: str, limit: int = 3) -> list[dict]:
+    """Use DuckDuckGo (free, no key needed) to search the web."""
+    if not HAS_DDGS:
+        return []
     try:
-        with request.urlopen(req, timeout=12) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        return [{"query": query, "error": str(exc)}]
-
+        items = DDGS().text(query, max_results=limit)
+    except Exception:
+        return []
     results = []
-    raw_items = data.get("results") or data.get("data") or []
-    for item in raw_items[:limit]:
+    for item in items:
         results.append({
             "query": query,
             "title": strip_tags(str(item.get("title", ""))),
-            "url": str(item.get("url", "")),
-            "snippet": strip_tags(str(item.get("snippet") or item.get("content") or "")),
+            "url": str(item.get("href", "")),
+            "snippet": strip_tags(str(item.get("body", ""))),
         })
-    return results or [{"query": query, "error": "no results"}]
+    return results
+
+
+def search_tool(query: str, limit: int = 3) -> list[dict]:
+    if SEARCH_API_URL:
+        url = SEARCH_API_URL + ("&" if "?" in SEARCH_API_URL else "?") + parse.urlencode({"q": query, "limit": limit})
+        req = request.Request(url, headers={"User-Agent": "worldcup-predictions/1.0"})
+        try:
+            with request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            return [{"query": query, "error": str(exc)}]
+        results = []
+        raw_items = data.get("results") or data.get("data") or []
+        for item in raw_items[:limit]:
+            results.append({
+                "query": query,
+                "title": strip_tags(str(item.get("title", ""))),
+                "url": str(item.get("url", "")),
+                "snippet": strip_tags(str(item.get("snippet") or item.get("content") or "")),
+            })
+        return results or [{"query": query, "error": "no results"}]
+
+    results = free_search(query, limit)
+    if results:
+        return results
+    return [{
+        "query": query,
+        "status": "search_unavailable",
+        "note": "免费搜索实例暂时不可用，LLM 只能基于已知数据推断。",
+    }]
 
 
 def worldcup26_tool(home: str, away: str) -> list[dict]:
@@ -1522,6 +1632,94 @@ def json_response(handler: SimpleHTTPRequestHandler, status: int, payload: dict)
     handler.wfile.write(body)
 
 
+def get_match_results() -> dict:
+    results_raw = fetch_worldcup_results()
+    if not results_raw:
+        return {"results": [], "summary": "暂无已完赛数据。", "generated_at": beijing_time()}
+    all_preds = get_history(limit=5000)
+    result_en_to_cn = {v: k for k, v in TEAM_EN.items()}
+    pred_by_key = {}
+    for p in all_preds:
+        for home_try in team_name_candidates(p.get("home", "")):
+            for away_try in team_name_candidates(p.get("away", "")):
+                home_key = normalize_team_text(home_try)
+                away_key = normalize_team_text(away_try)
+                if home_key and away_key:
+                    pred_by_key.setdefault(f"{home_key}-{away_key}", p)
+    extra_map = {
+        "south korea": "韩国", "czech republic": "捷克", "ecuador": "厄瓜多尔",
+        "turkey": "土耳其", "sweden": "瑞典", "jordan": "约旦", "panama": "巴拿马",
+        "iraq": "伊拉克", "bosnia and herzegovina": "波黑", "curaçao": "库拉索",
+        "democratic republic of the congo": "刚果金", "dr congo": "刚果金",
+    }
+    for en, cn in extra_map.items():
+        result_en_to_cn[en] = cn
+    EN_TO_CN_LOWER = {k.lower(): v for k, v in result_en_to_cn.items()}
+    items = []
+    for key, r in results_raw.items():
+        home_en, away_en = r["home"], r["away"]
+        home_cn = EN_TO_CN_LOWER.get(home_en.lower(), home_en)
+        away_cn = EN_TO_CN_LOWER.get(away_en.lower(), away_en)
+        pred_match = None
+        for home_try in team_name_candidates(home_cn) + team_name_candidates(home_en):
+            for away_try in team_name_candidates(away_cn) + team_name_candidates(away_en):
+                try_key = f"{normalize_team_text(home_try)}-{normalize_team_text(away_try)}"
+                if try_key in pred_by_key:
+                    pred_match = pred_by_key[try_key]
+                    break
+            if pred_match:
+                break
+        for home_try, away_try in [(home_cn, away_cn), (home_en, away_en)]:
+            if pred_match:
+                break
+            try_key = f"{normalize_team_text(home_try)}-{normalize_team_text(away_try)}"
+            if try_key in pred_by_key:
+                pred_match = pred_by_key[try_key]
+        if not pred_match:
+            home_lower = home_en.lower()
+            for p in all_preds:
+                p_home = p.get("home", "")
+                if home_lower in p_home.lower() or p_home in home_en:
+                    pred_match = p
+                    break
+        predicted_score = ""
+        predicted_pick = ""
+        pick_hit = None
+        if pred_match:
+            predicted_score = normalize_score_text(pred_match.get("predicted_score") or pred_match.get("static_score", ""))
+            text = (pred_match.get("analysis", "") + " " + pred_match.get("summary", "")).strip()
+            for p, label in [("主胜", "主胜"), ("平局", "平局"), ("客胜", "客胜")]:
+                if p in text:
+                    predicted_pick = label
+                    break
+            if predicted_pick:
+                pick_hit = (predicted_pick == r["pick"])
+        items.append({
+            "home": home_cn,
+            "away": away_cn,
+            "home_en": home_en,
+            "away_en": away_en,
+            "actual_score": f"{r['home_score']}-{r['away_score']}",
+            "actual_pick": r["pick"],
+            "predicted_score": predicted_score,
+            "predicted_pick": predicted_pick,
+            "pick_hit": pick_hit,
+            "source": r.get("source", ""),
+        })
+    total_pred = sum(1 for i in items if i["predicted_pick"])
+    hits = sum(1 for i in items if i["pick_hit"] is True)
+    misses = sum(1 for i in items if i["pick_hit"] is False)
+    return {
+        "results": items,
+        "total_finished": len(items),
+        "total_predicted": total_pred,
+        "hits": hits,
+        "misses": misses,
+        "accuracy": round(hits / total_pred * 100, 1) if total_pred else None,
+        "generated_at": beijing_time(),
+    }
+
+
 class Handler(SimpleHTTPRequestHandler):
     def translate_path(self, path: str) -> str:
         path = path.split("?", 1)[0].split("#", 1)[0]
@@ -1553,6 +1751,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/sim/worker/run":
             json_response(self, 200, run_auto_worker_once())
+            return
+        if parsed.path == "/api/results":
+            json_response(self, 200, get_match_results())
             return
         super().do_GET()
 
@@ -1618,6 +1819,55 @@ def extract_json_object(text: str) -> dict:
         raise
 
 
+def auto_plan_debug(plan: object, text: str = "") -> dict:
+    keys = sorted(plan.keys()) if isinstance(plan, dict) else []
+    return {
+        "plan_type": type(plan).__name__,
+        "plan_keys": keys[:30],
+        "raw_preview": strip_tags(str(text or ""))[:1200],
+    }
+
+
+def normalize_auto_pick(value: object) -> str:
+    raw = str(value or "").strip()
+    lowered = raw.lower()
+    mapping = {
+        "主胜": "主胜", "胜": "主胜", "home": "主胜", "home_win": "主胜", "home win": "主胜",
+        "平局": "平局", "平": "平局", "draw": "平局", "tie": "平局",
+        "客胜": "客胜", "负": "客胜", "away": "客胜", "away_win": "客胜", "away win": "客胜",
+        "跳过": "跳过", "skip": "跳过", "pass": "跳过", "no bet": "跳过", "不下注": "跳过",
+    }
+    return mapping.get(raw) or mapping.get(lowered) or "跳过"
+
+
+def first_present(data: dict, keys: list[str], default=None):
+    for key in keys:
+        if key in data and data.get(key) not in (None, ""):
+            return data.get(key)
+    return default
+
+
+def normalize_auto_plan_items(plan: object) -> dict:
+    if not isinstance(plan, dict):
+        return {"summary": "", "mode": "", "decisions": [], "bets": [], "parlays": []}
+    decisions = first_present(plan, ["decisions", "decision", "matches", "recommendations", "picks", "选择"], [])
+    bets = first_present(plan, ["bets", "bet", "single_bets", "singles", "wagers", "下注"], [])
+    parlays = first_present(plan, ["parlays", "parlay_bets", "combo_bets", "accumulators", "串关"], [])
+    if isinstance(decisions, dict):
+        decisions = list(decisions.values())
+    if isinstance(bets, dict):
+        bets = list(bets.values())
+    if isinstance(parlays, dict):
+        parlays = list(parlays.values())
+    return {
+        "summary": str(first_present(plan, ["summary", "策略", "总结"], "") or ""),
+        "mode": str(first_present(plan, ["mode", "planMode", "模式"], "") or ""),
+        "decisions": decisions if isinstance(decisions, list) else [],
+        "bets": bets if isinstance(bets, list) else [],
+        "parlays": parlays if isinstance(parlays, list) else [],
+    }
+
+
 def call_llm_json(api_key: str, prompt: str, max_tokens: int = 2200) -> tuple[dict, str]:
     body = {
         "model": MODEL,
@@ -1637,7 +1887,7 @@ def call_llm_json(api_key: str, prompt: str, max_tokens: int = 2200) -> tuple[di
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
-    with request.urlopen(req, timeout=45) as resp:
+    with request.urlopen(req, timeout=120) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     text = data["choices"][0]["message"]["content"].strip()
     try:
@@ -1675,7 +1925,12 @@ def call_llm_json(api_key: str, prompt: str, max_tokens: int = 2200) -> tuple[di
 
 
 def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
-    matches = payload.get("matches") or []
+    incoming_matches = payload.get("matches") or []
+    finished_results = fetch_worldcup_results()
+    matches = [
+        match for match in incoming_matches
+        if not match_result_for_teams(match.get("home", ""), match.get("away", ""), finished_results)
+    ]
     settings = payload.get("settings") or {}
     bankroll = float(settings.get("cash") or settings.get("bankroll") or 0)
     max_stake_pct = float(settings.get("maxStakePct") or 5)
@@ -1764,6 +2019,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 }}
 </json>
 """
+    text = ""
     try:
         plan, text = call_llm_json(api_key, prompt, max_tokens=2200)
     except error.HTTPError as exc:
@@ -1778,6 +2034,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             "model": MODEL,
             "generated_at": beijing_time(),
             "error": True,
+            "llm_debug": {"raw_preview": detail[:1200]},
         }
     except Exception as exc:
         summary = f"LLM 自动下注计划解析失败：{exc}"
@@ -1790,24 +2047,50 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             "model": MODEL,
             "generated_at": beijing_time(),
             "error": True,
+            "llm_debug": {"raw_preview": str(exc)[:1200]},
         }
 
+    normalized_plan = normalize_auto_plan_items(plan)
+    if not normalized_plan["decisions"] and not normalized_plan["bets"] and not normalized_plan["parlays"]:
+        retry_prompt = prompt + f"""
+
+上一次你返回的是空计划，无法用于模拟盘：
+{json.dumps(plan, ensure_ascii=False)[:1200]}
+
+请重新输出。必须满足：
+- decisions 必须覆盖所有比赛 id，不能省略。
+- 至少给出 3 场非“跳过”的小仓单关，除非所有 betting_allowed 都是 false。
+- bets 必须包含这些非跳过单关，stake 为 50 到 {round(bankroll * max_stake_pct / 100)} 之间的整数。
+- 仍然只输出 <json>...</json>。
+"""
+        try:
+            plan, text = call_llm_json(api_key, retry_prompt, max_tokens=2600)
+        except Exception:
+            pass
+
+    debug = auto_plan_debug(plan, text)
+    normalized_plan = normalize_auto_plan_items(plan)
     match_ids = {str(match.get("id")) for match in matches}
     match_by_id = {str(match.get("id")): match for match in matches}
     decisions_by_id = {}
-    raw_decisions = plan.get("decisions") if isinstance(plan.get("decisions"), list) else []
+    raw_valid_decisions = 0
+    raw_decisions = normalized_plan["decisions"]
     for item in raw_decisions:
-        if str(item.get("id")) not in match_ids:
+        if not isinstance(item, dict):
             continue
-        pick = item.get("pick") if item.get("pick") in ("主胜", "平局", "客胜", "跳过") else "跳过"
-        decisions_by_id[str(item.get("id"))] = {
-            "id": item.get("id"),
+        mid = str(first_present(item, ["id", "match_id", "matchId", "比赛id", "场次"], ""))
+        if mid not in match_ids:
+            continue
+        pick = normalize_auto_pick(first_present(item, ["pick", "selection", "choice", "result", "预测", "选择"], "跳过"))
+        raw_valid_decisions += 1
+        decisions_by_id[mid] = {
+            "id": mid,
             "pick": pick,
-            "probability": item.get("probability", 0),
-            "edge_pct": item.get("edge_pct", 0),
-            "stake": item.get("stake", 0) if pick != "跳过" else 0,
-            "risk": item.get("risk") or "中",
-            "reason": str(item.get("reason") or "LLM未给出详细理由")[:160],
+            "probability": first_present(item, ["probability", "prob", "confidence", "胜率"], 0),
+            "edge_pct": first_present(item, ["edge_pct", "edge", "value", "优势"], 0),
+            "stake": first_present(item, ["stake", "amount", "bet", "下注金额"], 0) if pick != "跳过" else 0,
+            "risk": first_present(item, ["risk", "风险"], "中"),
+            "reason": str(first_present(item, ["reason", "rationale", "analysis", "理由"], "LLM未给出详细理由"))[:160],
         }
     for match in matches:
         mid = str(match.get("id"))
@@ -1825,33 +2108,48 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
     safe_bets = []
     remaining = bankroll
     max_single = bankroll * max_stake_pct / 100
-    for item in plan.get("bets", []):
-        if str(item.get("id")) not in match_ids:
+    raw_bets = normalized_plan["bets"]
+    if not raw_bets:
+        raw_bets = [item for item in decisions_by_id.values() if item.get("pick") != "跳过" and item.get("stake")]
+    for item in raw_bets:
+        if not isinstance(item, dict):
             continue
-        if not kickoff_gate(match_by_id[str(item.get("id"))])["allowed"]:
+        mid = str(first_present(item, ["id", "match_id", "matchId", "比赛id", "场次"], ""))
+        if mid not in match_ids:
             continue
-        pick = item.get("pick")
-        if pick not in ("主胜", "平局", "客胜"):
+        if not kickoff_gate(match_by_id[mid])["allowed"]:
+            continue
+        pick = normalize_auto_pick(first_present(item, ["pick", "selection", "choice", "result", "预测", "选择"], "跳过"))
+        if pick == "跳过":
             continue
         try:
-            stake = max(0, min(float(item.get("stake") or 0), max_single, remaining))
+            stake = max(0, min(float(first_present(item, ["stake", "amount", "bet", "下注金额"], 0) or 0), max_single, remaining))
         except (TypeError, ValueError):
             stake = 0
         if stake <= 0:
             continue
         remaining -= stake
         item["stake"] = round(stake)
+        item["id"] = mid
+        item["pick"] = pick
         safe_bets.append(item)
-        if str(item.get("id")) in decisions_by_id:
-            decisions_by_id[str(item.get("id"))]["pick"] = pick
-            decisions_by_id[str(item.get("id"))]["stake"] = round(stake)
+        if mid in decisions_by_id:
+            decisions_by_id[mid]["pick"] = pick
+            decisions_by_id[mid]["stake"] = round(stake)
     safe_parlays = []
-    for parlay in plan.get("parlays", []) if isinstance(plan.get("parlays"), list) else []:
+    for parlay in normalized_plan["parlays"]:
+        if not isinstance(parlay, dict):
+            continue
         legs = []
         combined_odds = 1.0
-        for leg in parlay.get("legs", [])[:3]:
-            mid = str(leg.get("id"))
-            pick = leg.get("pick")
+        raw_legs = first_present(parlay, ["legs", "matches", "legs_list", "串关场次"], [])
+        if not isinstance(raw_legs, list):
+            raw_legs = []
+        for leg in raw_legs[:3]:
+            if not isinstance(leg, dict):
+                continue
+            mid = str(first_present(leg, ["id", "match_id", "matchId", "比赛id", "场次"], ""))
+            pick = normalize_auto_pick(first_present(leg, ["pick", "selection", "choice", "result", "预测", "选择"], ""))
             if mid not in match_by_id or pick not in ("主胜", "平局", "客胜"):
                 continue
             if not kickoff_gate(match_by_id[mid])["allowed"]:
@@ -1877,14 +2175,35 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             "stake": round(stake),
             "reason": str(parlay.get("reason") or "LLM 串关模拟下注")[:160],
         })
+    valid_non_skip_decisions = sum(1 for item in decisions_by_id.values() if item.get("pick") != "跳过")
+    if not raw_valid_decisions and not safe_bets and not safe_parlays:
+        summary = "LLM 返回了空计划或非预期结构，未识别到有效比赛决策；保留赔率签名以便下次重试。"
+        return {
+            "summary": summary,
+            "mode": normalized_plan["mode"] or "解析失败",
+            "decisions": error_decisions(matches, summary),
+            "bets": [],
+            "parlays": [],
+            "model": MODEL,
+            "generated_at": beijing_time(),
+            "error": True,
+            "llm_debug": debug,
+        }
     return {
-        "summary": str(plan.get("summary") or "LLM 已生成模拟下注计划。"),
-        "mode": plan.get("mode") or "单关",
+        "summary": normalized_plan["summary"] or "LLM 已生成模拟下注计划。",
+        "mode": normalized_plan["mode"] or "单关",
         "decisions": list(decisions_by_id.values()),
         "bets": safe_bets,
         "parlays": safe_parlays,
         "model": MODEL,
         "generated_at": beijing_time(),
+        "llm_debug": {
+            **debug,
+            "raw_valid_decisions": raw_valid_decisions,
+            "valid_non_skip_decisions": valid_non_skip_decisions,
+            "valid_bets": len(safe_bets),
+            "valid_parlays": len(safe_parlays),
+        },
     }
 
 
