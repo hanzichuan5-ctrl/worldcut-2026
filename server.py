@@ -438,6 +438,15 @@ def save_sim_state(state: dict) -> dict:
     return safe_state
 
 
+def save_client_sim_state(state: dict) -> dict:
+    account_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(state.get("account_id") or ""))[:48] or uuid.uuid4().hex[:12]
+    current = get_sim_state(account_id)
+    for key in ("settlement", "worker", "worker_log"):
+        if key in current:
+            state[key] = current[key]
+    return save_sim_state(state)
+
+
 def normalize_team_text(value: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(value or "").lower())
 
@@ -811,8 +820,6 @@ def get_sim_snapshot(account_id: str | None, auto_settle: bool = True) -> dict:
         return settle_sim_account(account_id or "global")
     state = get_sim_state(account_id or "global")
     state["stats"] = calculate_sim_stats(state.get("account") or {})
-    generate_missing_post_reviews(state)
-    save_sim_state(state)
     return state
 
 
@@ -1853,7 +1860,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                json_response(self, 200, save_sim_state(payload))
+                json_response(self, 200, save_client_sim_state(payload))
             except Exception as exc:
                 json_response(self, 500, {"error": str(exc)})
             return

@@ -695,9 +695,6 @@ function updateDbStatus(data={}){
 function loadLlmBetHistory(){
   return [];
 }
-function saveLlmBetHistory(){
-  saveSimAccount();
-}
 function calculateLocalStats(){
   const bets = Array.isArray(simAccount.bets) ? simAccount.bets : [];
   const settled = bets.filter(bet => ['已中','未中'].includes(bet.status));
@@ -894,7 +891,6 @@ function recordLlmBetPlan(plan, placed, manual=false){
     decisions: plan.decisions || []
   });
   llmBetHistory = llmBetHistory.slice(0, 20);
-  saveLlmBetHistory();
 }
 function resetSimAccount(){
   simAccount = {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
@@ -1213,7 +1209,6 @@ renderFilters(); render();
   document.getElementById(id)?.addEventListener('input', () => {
     if (id === 'bankroll') {
       simAccount = {initial: readBankrollInput(), cash: readBankrollInput(), bets: []};
-      saveSimAccount();
     }
     renderSimulation();
   });
