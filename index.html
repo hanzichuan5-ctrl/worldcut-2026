@@ -144,6 +144,7 @@
     .results-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px 14px; }
     .results-head h2 { margin: 0; font-size: 22px; }
     .results-head p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+    .results-head button { padding: 7px 10px; background: #fffaf0; flex: 0 0 auto; }
     .results-summary { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 0 18px 14px; color: var(--muted); font-size: 14px; }
     .results-summary b { color: var(--ink); }
     .results-list { border-top: 1px solid var(--line); background: #fff; }
@@ -280,6 +281,7 @@
             <h2>赛果与预测评估</h2>
             <p>已完赛结果 vs LLM 赛前预测，自动匹配预测记录并计算命中率。</p>
           </div>
+          <button type="button" id="resultsRefreshBtn" onclick="loadResults({manual:true})">刷新</button>
         </div>
         <div class="results-summary" id="resultsSummary">正在加载赛果数据...</div>
         <div class="results-list" id="resultsList"></div>
@@ -582,7 +584,6 @@ function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞
   if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusPrefix}，已切换为体彩售卖列表 ${valid.length} 场。`;
   renderFilters();
   render();
-  maybeAutoLlmBet();
   return valid.length;
 }
 function toggleOddsImport(){
@@ -756,11 +757,6 @@ function decimalForPick(match, pick){
 function oddsSignature(){
   const activeMatches = pendingMatches();
   return `${AUTO_BET_STRATEGY_VERSION}|${activeMatches.map(match => `${match.id}:${match.home}-${match.away}:${(match.odds || []).join('/')}`).join('|')}`;
-}
-function maybeAutoLlmBet(){
-  const signature = oddsSignature();
-  if (!pendingMatches().length || !signature || signature === lastAutoBetSignature) return;
-  llmAutoPlaceBets({manual:false, signature});
 }
 async function llmAutoPlaceBets(options={}){
   if (llmBetRunning) return;
@@ -1228,7 +1224,12 @@ renderFilters(); render();
     renderSimulation();
   });
 });
-async function loadResults(){
+async function loadResults(options={}){
+  const button = document.getElementById('resultsRefreshBtn');
+  if (button) {
+    button.disabled = true;
+    button.textContent = options.manual ? '刷新中...' : '刷新';
+  }
   try {
     const res = await fetch('/api/results');
     const data = await res.json();
@@ -1270,10 +1271,14 @@ async function loadResults(){
   } catch (err) {
     const summary = document.getElementById('resultsSummary');
     if (summary) summary.innerHTML = `<b>加载赛果失败：</b>${err.message}`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = '刷新';
+    }
   }
 }
 loadResults();
-setInterval(loadResults, 5 * 60 * 1000);
 
 async function boot(){
   try {
@@ -1286,8 +1291,6 @@ async function boot(){
   refreshSportteryOdds();
 }
 boot();
-setTimeout(refreshAllAi, 3000);
-setInterval(refreshAllAi, 10 * 60 * 1000);
 </script>
 </body>
 </html>
