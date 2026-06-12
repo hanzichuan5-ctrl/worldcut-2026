@@ -59,7 +59,9 @@ AUTO_WORKER_STARTED = False
 SNAPSHOT_WORKER_STARTED = False
 PREDICT_RATE_LIMIT_COUNT = max(1, int(os.getenv("PREDICT_RATE_LIMIT_COUNT", "8")))
 PREDICT_RATE_LIMIT_SECONDS = max(10, int(os.getenv("PREDICT_RATE_LIMIT_SECONDS", "300")))
+PREDICTION_REUSE_SECONDS = max(CACHE_TTL_SECONDS, int(os.getenv("PREDICTION_REUSE_SECONDS", "86400")))
 AUTO_BET_RATE_LIMIT_SECONDS = max(60, int(os.getenv("AUTO_BET_RATE_LIMIT_SECONDS", "900")))
+AUTO_BET_RETRY_SECONDS = max(300, int(os.getenv("AUTO_BET_RETRY_SECONDS", "3600")))
 SIM_SAVE_RATE_LIMIT_COUNT = max(5, int(os.getenv("SIM_SAVE_RATE_LIMIT_COUNT", "20")))
 SIM_SAVE_RATE_LIMIT_SECONDS = max(10, int(os.getenv("SIM_SAVE_RATE_LIMIT_SECONDS", "60")))
 SIM_SETTLE_RATE_LIMIT_SECONDS = max(10, int(os.getenv("SIM_SETTLE_RATE_LIMIT_SECONDS", "60")))
@@ -262,12 +264,12 @@ def get_prediction(api_key: str, match: dict) -> dict:
         }
     now = datetime.now(timezone.utc).timestamp()
     cached = PREDICTION_CACHE.get(key)
-    if cached and now - cached["ts"] < CACHE_TTL_SECONDS:
+    if cached and now - cached["ts"] < PREDICTION_REUSE_SECONDS:
         payload = dict(cached["payload"])
         payload["cached"] = True
         payload["cache_source"] = "memory"
         return payload
-    persisted = get_recent_prediction_payload(match_id, CACHE_TTL_SECONDS, prompt_version=PROMPT_VERSION)
+    persisted = get_recent_prediction_payload(match_id, PREDICTION_REUSE_SECONDS, prompt_version=PROMPT_VERSION)
     if persisted:
         PREDICTION_CACHE[key] = {"ts": now, "payload": persisted}
         payload = dict(persisted)
@@ -2008,6 +2010,9 @@ class Handler(SimpleHTTPRequestHandler):
                 json_response(self, 200, result)
                 return
             if self.path == "/api/predict":
+                if not payload.get("manual"):
+                    json_response(self, 429, {"error": "前端自动 AI 预测已关闭；请手动点击单场分析。"})
+                    return
                 ip = client_ip(self)
                 if rate_limited(f"predict:{ip}", PREDICT_RATE_LIMIT_COUNT, PREDICT_RATE_LIMIT_SECONDS):
                     json_response(self, 429, {"error": "AI 预测请求过于频繁，请稍后再试。"})
@@ -2568,28 +2573,33 @@ def run_auto_worker_once() -> dict:
     bet_error = ""
     api_key = os.getenv("OPENAI_API_KEY", "")
     if matches and signature and signature != state.get("last_signature") and api_key:
-        refreshed_state = get_sim_state(account_id)
-        account = refreshed_state.get("account") or {"initial": 10000, "cash": 10000, "bets": []}
-        plan = get_auto_bet_plan(api_key, {
-            "matches": matches,
-            "settings": {
-                "bankroll": account.get("initial", 10000),
-                "cash": account.get("cash", 10000),
-                "riskMode": "half",
-                "maxStakePct": 5,
-                "minEdgePct": 2,
-            },
-        })
-        with SIM_STATE_LOCK:
-            latest_state = get_sim_state(account_id)
-            if signature == latest_state.get("last_signature"):
-                bet_summary = "赔率签名已由其它任务处理，跳过重复下注。"
-            else:
-                applied = apply_auto_bet_plan_to_state(latest_state, matches, plan, signature, "后台自动触发")
-                placed = applied["placed"]
-                bet_summary = plan.get("summary") or ""
-                if plan.get("error"):
-                    bet_error = bet_summary
+        worker = state.get("worker") if isinstance(state.get("worker"), dict) else {}
+        last_error_ts = float(worker.get("last_error_ts") or 0)
+        if signature == worker.get("last_error_signature") and time.time() - last_error_ts < AUTO_BET_RETRY_SECONDS:
+            bet_error = "同一赔率签名的 LLM 自动下注刚失败过，等待冷却后再试。"
+        else:
+            refreshed_state = get_sim_state(account_id)
+            account = refreshed_state.get("account") or {"initial": 10000, "cash": 10000, "bets": []}
+            plan = get_auto_bet_plan(api_key, {
+                "matches": matches,
+                "settings": {
+                    "bankroll": account.get("initial", 10000),
+                    "cash": account.get("cash", 10000),
+                    "riskMode": "half",
+                    "maxStakePct": 5,
+                    "minEdgePct": 2,
+                },
+            })
+            with SIM_STATE_LOCK:
+                latest_state = get_sim_state(account_id)
+                if signature == latest_state.get("last_signature"):
+                    bet_summary = "赔率签名已由其它任务处理，跳过重复下注。"
+                else:
+                    applied = apply_auto_bet_plan_to_state(latest_state, matches, plan, signature, "后台自动触发")
+                    placed = applied["placed"]
+                    bet_summary = plan.get("summary") or ""
+                    if plan.get("error"):
+                        bet_error = bet_summary
     elif matches and signature == state.get("last_signature"):
         bet_summary = "赔率签名未变化，跳过 LLM 自动下注。"
     elif not api_key:
@@ -2620,6 +2630,8 @@ def run_auto_worker_once() -> dict:
             "last_reviews_added": result["reviews_added"],
             "last_placed": result["placed"],
             "last_error": result["error"],
+            "last_error_signature": signature if result["error"] else "",
+            "last_error_ts": time.time() if result["error"] else 0,
         }
         save_sim_state(state_after)
     print(

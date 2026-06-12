@@ -1178,7 +1178,7 @@ async function fetchAndApply(match, button){
     const res = await fetch('/api/predict', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ match })
+      body: JSON.stringify({ match, manual: true })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '请求失败');
