@@ -61,3 +61,5 @@ sing-box*.json
 ## 说明
 
 本项目只用于预测研究和模拟盘复盘，不提供真实下注能力，也不构成投注建议。
+<img width="1013" height="567" alt="cfc02e8b72065d3a1869321190beed0b" src="https://github.com/user-attachments/assets/0b16e160-a1e8-4813-bd5b-bab3bdd0ae57" />
+
