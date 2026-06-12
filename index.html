@@ -358,6 +358,15 @@ let workerLog = [];
 let simAccountId = GLOBAL_SIM_ACCOUNT_ID;
 let lastAutoBetSignature = '';
 let llmBetRunning = false;
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
 for (const match of matches) {
   match.baseOdds = [...match.odds];
   match.oddsSource = '静态兜底';
@@ -598,7 +607,7 @@ function applyImportedOdds(){
     const applied = applySportteryItems(items, '已导入体彩固定奖金');
     if (!applied && source) source.querySelector('span').innerHTML = '<b>赔率源：</b>已解析导入内容，但没有匹配到当前页面比赛。';
   } catch (err) {
-    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>导入失败：${err.message}`;
+    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>导入失败：${escapeHtml(err.message)}`;
   }
 }
 async function refreshSportteryOdds(){
@@ -615,11 +624,11 @@ async function refreshSportteryOdds(){
       const statusText = data.status === 'ok'
         ? `已接入中国体育彩票竞彩网固定奖金，已切换为待赛体彩列表 ${applied} 场${filteredText}。`
         : `体彩源当前不可用：${data.note || data.status || '未知状态'}；可点“导入体彩 JSON”手动导入，页面先使用静态兜底赔率。`;
-      source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusText}`;
+      source.querySelector('span').innerHTML = `<b>赔率源：</b>${escapeHtml(statusText)}`;
     }
     if (data.status !== 'ok') render();
   } catch (err) {
-    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>体彩赔率读取失败：${err.message}；页面继续使用静态兜底赔率。`;
+    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>体彩赔率读取失败：${escapeHtml(err.message)}；页面继续使用静态兜底赔率。`;
   }
 }
 function pickIndex(match){
@@ -680,7 +689,7 @@ async function saveSimAccount(options={}){
     });
   } catch (err) {
     const source = document.getElementById('oddsSource');
-    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户保存失败：${err.message}`;
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户保存失败：${escapeHtml(err.message)}`;
   }
 }
 function updateDbStatus(data={}){
@@ -691,7 +700,7 @@ function updateDbStatus(data={}){
   const worker = data.worker || workerInfo || {};
   const checked = settlement.last_checked_at || data.updated_at || '刚刚';
   const workerText = worker.last_run_at ? `后台最近运行：${worker.last_run_at}，赔率 ${worker.last_odds_status || '-'} / ${worker.last_odds_count || 0} 场，新增下注 ${worker.last_placed || 0} 单。` : '后台任务等待首次运行。';
-  el.innerHTML = `<b>数据库：</b>已加载统一账户 global。持仓 ${stats.total_bets || 0} 单，待结算 ${stats.pending_bets || 0} 单，已结算 ${stats.settled_bets || 0} 单，赛后复盘 ${postReviews.length || 0} 条。最近结算检查：${checked}。${workerText}`;
+  el.innerHTML = `<b>数据库：</b>已加载统一账户 global。持仓 ${Number(stats.total_bets || 0)} 单，待结算 ${Number(stats.pending_bets || 0)} 单，已结算 ${Number(stats.settled_bets || 0)} 单，赛后复盘 ${postReviews.length || 0} 条。最近结算检查：${escapeHtml(checked)}。${escapeHtml(workerText)}`;
 }
 function loadLlmBetHistory(){
   return [];
@@ -787,7 +796,7 @@ async function llmAutoPlaceBets(options={}){
     if (!res.ok) throw new Error(data.error || '请求失败');
     applyLlmBetPlan(data, options);
   } catch (err) {
-    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>LLM 自动下注失败：${err.message}；未生成下注。`;
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>LLM 自动下注失败：${escapeHtml(err.message)}；未生成下注。`;
   } finally {
     llmBetRunning = false;
     if (btn) {
@@ -871,7 +880,7 @@ function applyLlmBetPlan(plan, options={}){
   renderLlmHistory();
   document.getElementById('simLedger')?.classList.add('show');
   const source = document.getElementById('oddsSource');
-  if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>${plan.summary || 'LLM 已完成模拟下注。'} 新增 ${placed} 单。`;
+  if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>${escapeHtml(plan.summary || 'LLM 已完成模拟下注。')} 新增 ${Number(placed || 0)} 单。`;
 }
 function recordLlmBetPlan(plan, placed, manual=false){
   llmBetHistory.unshift({
@@ -934,7 +943,7 @@ async function settleSimAccount(){
     updateDbStatus(data);
     if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>本次结算 ${data.settled || 0} 单，新增复盘 ${data.reviews_added || 0} 条，赛果源 ${data.results_count || 0} 场。`;
   } catch (err) {
-    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>结算失败：${err.message}`;
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>结算失败：${escapeHtml(err.message)}`;
   }
 }
 function renderLlmHistory(){
@@ -946,17 +955,17 @@ function renderLlmHistory(){
   }
   const historyHtml = llmBetHistory.slice(0, 10).map(item => `
     <div class="llm-history-item">
-      <b>${item.time} · ${item.mode} · 新增 ${item.placed} 单</b>
-      <div>${item.summary || '无摘要'}${item.planMode ? ` · 模式 ${item.planMode}` : ''}${item.model ? ` · ${item.model}` : ''}</div>
-      <div>${(item.bets || []).slice(0, 5).map(bet => `${bet.id} ${bet.pick} ${bet.stake || 0}，优势 ${bet.edge_pct || 0}%`).join('；') || '无下注'}</div>
-      <div>${(item.parlays || []).slice(0, 3).map(parlay => `${parlay.type} ${parlay.stake || 0}，赔率 ${parlay.combined_odds || '-'}`).join('；')}</div>
-      <div>${(item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.pick}：${decision.reason || '无理由'}`).join('；')}</div>
+      <b>${escapeHtml(item.time)} · ${escapeHtml(item.mode)} · 新增 ${Number(item.placed || 0)} 单</b>
+      <div>${escapeHtml(item.summary || '无摘要')}${item.planMode ? ` · 模式 ${escapeHtml(item.planMode)}` : ''}${item.model ? ` · ${escapeHtml(item.model)}` : ''}</div>
+      <div>${escapeHtml((item.bets || []).slice(0, 5).map(bet => `${bet.id} ${bet.pick} ${bet.stake || 0}，优势 ${bet.edge_pct || 0}%`).join('；') || '无下注')}</div>
+      <div>${escapeHtml((item.parlays || []).slice(0, 3).map(parlay => `${parlay.type} ${parlay.stake || 0}，赔率 ${parlay.combined_odds || '-'}`).join('；'))}</div>
+      <div>${escapeHtml((item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.pick}：${decision.reason || '无理由'}`).join('；'))}</div>
     </div>`).join('');
   const workerHtml = workerLog.slice(0, 5).map(item => `
     <div class="llm-history-item">
-      <b>${item.time || ''} · 后台任务 · 下注 ${item.placed || 0} / 结算 ${item.settled || 0}</b>
-      <div>赔率：${item.odds_status || '-'}，场次 ${item.odds_count || 0}，新增复盘 ${item.reviews_added || 0}</div>
-      <div>${item.summary || item.error || '本轮无新增动作'}</div>
+      <b>${escapeHtml(item.time || '')} · 后台任务 · 下注 ${Number(item.placed || 0)} / 结算 ${Number(item.settled || 0)}</b>
+      <div>赔率：${escapeHtml(item.odds_status || '-')}，场次 ${Number(item.odds_count || 0)}，新增复盘 ${Number(item.reviews_added || 0)}</div>
+      <div>${escapeHtml(item.summary || item.error || '本轮无新增动作')}</div>
     </div>`).join('');
   panel.innerHTML = historyHtml + workerHtml;
 }
@@ -969,11 +978,11 @@ function renderPostReviews(){
   }
   panel.innerHTML = postReviews.slice(0, 8).map(item => `
     <div class="llm-history-item">
-      <b>${item.time || ''} · ${item.type || '模拟单'} · ${item.status || ''} · 盈亏 ${item.profit || 0}</b>
-      <div>${item.match || ''} · 下注 ${item.stake || 0} · 赔率 ${item.odds || '-'}</div>
-      <div>${item.summary || ''}</div>
-      <div>${item.detail || ''}</div>
-      <div>${item.lesson || ''}</div>
+      <b>${escapeHtml(item.time || '')} · ${escapeHtml(item.type || '模拟单')} · ${escapeHtml(item.status || '')} · 盈亏 ${Number(item.profit || 0)}</b>
+      <div>${escapeHtml(item.match || '')} · 下注 ${Number(item.stake || 0)} · 赔率 ${escapeHtml(item.odds || '-')}</div>
+      <div>${escapeHtml(item.summary || '')}</div>
+      <div>${escapeHtml(item.detail || '')}</div>
+      <div>${escapeHtml(item.lesson || '')}</div>
     </div>`).join('');
 }
 function renderSimAccount(){
@@ -1011,13 +1020,13 @@ function renderLedger(){
       const profitText = bet.status === '已中' || bet.status === '未中'
         ? `${bet.stake} / ${Number(bet.settledProfit || 0) >= 0 ? '+' : ''}${bet.settledProfit || 0}`
         : `${bet.stake} / +${bet.potentialProfit}`;
-      const resultText = bet.result ? `<br>赛果 ${bet.result}` : bet.legResults ? `<br>${bet.legResults.map(leg => `${leg.match} ${leg.result}`).join('；')}` : '';
+      const resultText = bet.result ? `<br>赛果 ${escapeHtml(bet.result)}` : bet.legResults ? `<br>${escapeHtml(bet.legResults.map(leg => `${leg.match} ${leg.result}`).join('；'))}` : '';
       return `
       <div class="sim-ledger-row">
-        <span><b>${bet.match}</b><br>${bet.placedAt}</span>
-        <span>${bet.pick} · ${bet.odds}${bet.agent ? `<br>${bet.agent}` : ''}</span>
+        <span><b>${escapeHtml(bet.match)}</b><br>${escapeHtml(bet.placedAt)}</span>
+        <span>${escapeHtml(bet.pick)} · ${escapeHtml(bet.odds)}${bet.agent ? `<br>${escapeHtml(bet.agent)}` : ''}</span>
         <span>${profitText}</span>
-        <span>${bet.status}${resultText}${bet.reason ? `<br>${bet.reason}` : ''}</span>
+        <span>${escapeHtml(bet.status)}${resultText}${bet.reason ? `<br>${escapeHtml(bet.reason)}` : ''}</span>
       </div>`;
     }).join('')}`;
 }
@@ -1042,19 +1051,19 @@ function renderSimulation(){
       totalStake += Number(llmBet.stake || 0);
       totalProfit += Number(llmBet.potentialProfit || 0);
       count++;
-      el.innerHTML = `<b>LLM 持仓：</b>${llmBet.pick}，赔率 ${llmBet.odds}，下注 ${llmBet.stake}，潜在盈利 ${llmBet.potentialProfit}。${llmBet.reason || ''}`;
+      el.innerHTML = `<b>LLM 持仓：</b>${escapeHtml(llmBet.pick)}，赔率 ${escapeHtml(llmBet.odds)}，下注 ${Number(llmBet.stake || 0)}，潜在盈利 ${Number(llmBet.potentialProfit || 0)}。${escapeHtml(llmBet.reason || '')}`;
       continue;
     }
     const parlayBet = parlayByMatch.get(String(match.id));
     if (parlayBet) {
-      el.innerHTML = `<b>LLM 串关：</b>参与 ${parlayBet.pick}，合成赔率 ${parlayBet.odds}，本单下注 ${parlayBet.stake}。${parlayBet.reason || ''}`;
+      el.innerHTML = `<b>LLM 串关：</b>参与 ${escapeHtml(parlayBet.pick)}，合成赔率 ${escapeHtml(parlayBet.odds)}，本单下注 ${Number(parlayBet.stake || 0)}。${escapeHtml(parlayBet.reason || '')}`;
       continue;
     }
     const decision = latestDecisions.get(String(match.id));
     if (decision) {
       const prob = Number(decision.probability || 0);
       const probText = prob > 0 && prob <= 1 ? `${Math.round(prob * 100)}%` : `${prob || 0}%`;
-      el.innerHTML = `<b>LLM 决策：</b>未下注。倾向 ${decision.pick || '跳过'}，概率 ${probText}，风险 ${decision.risk || '中'}。${decision.reason || ''}`;
+      el.innerHTML = `<b>LLM 决策：</b>未下注。倾向 ${escapeHtml(decision.pick || '跳过')}，概率 ${escapeHtml(probText)}，风险 ${escapeHtml(decision.risk || '中')}。${escapeHtml(decision.reason || '')}`;
     } else {
       el.innerHTML = '<b>LLM 决策：</b>等待生成。';
     }
@@ -1131,11 +1140,11 @@ async function toggleHistory(id, button){
     }
     panel.innerHTML = rows.map(row => `
       <div class="history-item">
-        <b>${row.generated_at || ''} · ${row.model || '未知模型'} · 预测比分 ${row.predicted_score || row.static_score || '无'}</b>
-        <p>${row.summary || '无摘要'}</p>
+        <b>${escapeHtml(row.generated_at || '')} · ${escapeHtml(row.model || '未知模型')} · 预测比分 ${escapeHtml(row.predicted_score || row.static_score || '无')}</b>
+        <p>${escapeHtml(row.summary || '无摘要')}</p>
       </div>`).join('');
   } catch (err) {
-    panel.innerHTML = `<div class="history-item"><p>历史查询失败：${err.message}</p></div>`;
+    panel.innerHTML = `<div class="history-item"><p>历史查询失败：${escapeHtml(err.message)}</p></div>`;
   }
 }
 async function runAiReview(id, button){
@@ -1254,24 +1263,28 @@ async function loadResults(options={}){
     `;
     const header = `<div class="result-row"><div>比赛</div><div>比分</div><div>预测比分</div><div>预测方向</div><div>结果</div></div>`;
     const rows = data.results.map(r => {
-      const teams = r.home === r.home_en ? r.home : `${r.home} <span style="color:var(--muted);font-size:12px">${r.home_en}</span>`;
-      const away = r.away === r.away_en ? r.away : `${r.away} <span style="color:var(--muted);font-size:12px">${r.away_en}</span>`;
+      const homeName = escapeHtml(r.home || '');
+      const awayName = escapeHtml(r.away || '');
+      const homeEn = escapeHtml(r.home_en || '');
+      const awayEn = escapeHtml(r.away_en || '');
+      const teams = r.home === r.home_en ? homeName : `${homeName} <span style="color:var(--muted);font-size:12px">${homeEn}</span>`;
+      const away = r.away === r.away_en ? awayName : `${awayName} <span style="color:var(--muted);font-size:12px">${awayEn}</span>`;
       let resultCell = '';
       if (r.pick_hit === true) resultCell = '<span class="hit">✅ 命中</span>';
       else if (r.pick_hit === false) resultCell = '<span class="miss">❌ 未中</span>';
       else resultCell = '<span class="skip">⚪ 无预测</span>';
       return `<div class="result-row">
         <div><strong>${teams}</strong> <span class="vs">vs</span> <strong>${away}</strong></div>
-        <div><strong>${r.actual_score}</strong></div>
-        <div>${r.predicted_score || '-'}</div>
-        <div>${r.predicted_pick || '-'}</div>
+        <div><strong>${escapeHtml(r.actual_score || '-')}</strong></div>
+        <div>${escapeHtml(r.predicted_score || '-')}</div>
+        <div>${escapeHtml(r.predicted_pick || '-')}</div>
         <div>${resultCell}</div>
       </div>`;
     }).join('');
     list.innerHTML = header + rows;
   } catch (err) {
     const summary = document.getElementById('resultsSummary');
-    if (summary) summary.innerHTML = `<b>加载赛果失败：</b>${err.message}`;
+    if (summary) summary.innerHTML = `<b>加载赛果失败：</b>${escapeHtml(err.message)}`;
   } finally {
     if (button) {
       button.disabled = false;
@@ -1287,7 +1300,7 @@ async function boot(){
     renderPostReviews();
   } catch (err) {
     const source = document.getElementById('oddsSource');
-    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户读取失败：${err.message}`;
+    if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户读取失败：${escapeHtml(err.message)}`;
   }
   refreshSportteryOdds();
 }

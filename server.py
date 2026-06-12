@@ -373,11 +373,14 @@ def get_history(match_id: str | None = None, limit: int = 50) -> list[dict]:
     result = []
     for row in rows:
         item = dict(row)
+        analysis = item.pop("analysis", "") or ""
         try:
-            item["sources"] = json.loads(item.pop("sources_json") or "[]")
+            item["sources"] = json.loads(item.pop("sources_json") or "[]")[:5]
         except json.JSONDecodeError:
             item["sources"] = []
-        item["predicted_score"] = extract_predicted_score(item.get("analysis", "")) or item.get("static_score", "")
+        item["predicted_score"] = extract_predicted_score(analysis) or item.get("static_score", "")
+        pick_text = f"{analysis} {item.get('summary', '')}"
+        item["predicted_pick"] = next((label for label in ("主胜", "平局", "客胜") if label in pick_text), "")
         result.append(item)
     return result
 
@@ -1842,11 +1845,13 @@ def _build_match_results() -> dict:
         pick_hit = None
         if pred_match:
             predicted_score = normalize_score_text(pred_match.get("predicted_score") or pred_match.get("static_score", ""))
-            text = (pred_match.get("analysis", "") + " " + pred_match.get("summary", "")).strip()
-            for p, label in [("主胜", "主胜"), ("平局", "平局"), ("客胜", "客胜")]:
-                if p in text:
-                    predicted_pick = label
-                    break
+            predicted_pick = pred_match.get("predicted_pick") or ""
+            if not predicted_pick:
+                text = pred_match.get("summary", "").strip()
+                for p, label in [("主胜", "主胜"), ("平局", "平局"), ("客胜", "客胜")]:
+                    if p in text:
+                        predicted_pick = label
+                        break
             if predicted_pick:
                 pick_hit = (predicted_pick == r["pick"])
         items.append({
@@ -1881,9 +1886,14 @@ def get_match_results() -> dict:
 
 class Handler(SimpleHTTPRequestHandler):
     def translate_path(self, path: str) -> str:
-        path = path.split("?", 1)[0].split("#", 1)[0]
-        rel = path.lstrip("/") or "index.html"
-        return str(ROOT / rel)
+        raw_path = path.split("?", 1)[0].split("#", 1)[0]
+        rel = parse.unquote(raw_path).lstrip("/") or "index.html"
+        target = (ROOT / rel).resolve()
+        try:
+            target.relative_to(ROOT)
+        except ValueError:
+            return str(ROOT / "__not_found__")
+        return str(target)
 
     def do_GET(self) -> None:
         parsed = parse.urlparse(self.path)
@@ -1897,6 +1907,7 @@ class Handler(SimpleHTTPRequestHandler):
                 limit = int(params.get("limit", ["50"])[0])
             except ValueError:
                 limit = 50
+            limit = max(1, min(limit, 100))
             json_response(self, 200, {"history": get_history(match_id=match_id, limit=limit)})
             return
         if parsed.path == "/api/sim/account":
