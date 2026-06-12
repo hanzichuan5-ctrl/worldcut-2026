@@ -244,6 +244,20 @@ def match_id_key(match: dict) -> str:
     return str(match.get("id") or f"{match.get('home', '')}-{match.get('away', '')}-{match.get('d', '')}-{match.get('time', '')}")
 
 
+def prediction_reuse_seconds(match: dict) -> int:
+    kickoff = parse_beijing_kickoff(match)
+    if not kickoff:
+        return PREDICTION_REUSE_SECONDS
+    seconds_to_kickoff = (kickoff - datetime.now(BEIJING_TZ)).total_seconds()
+    if seconds_to_kickoff <= 0:
+        return PREDICTION_REUSE_SECONDS
+    if seconds_to_kickoff <= 30 * 60:
+        return max(CACHE_TTL_SECONDS, 10 * 60)
+    if seconds_to_kickoff <= 2 * 60 * 60:
+        return max(CACHE_TTL_SECONDS, 30 * 60)
+    return PREDICTION_REUSE_SECONDS
+
+
 def get_prediction(api_key: str, match: dict) -> dict:
     key = cache_key(match)
     match_id = match_id_key(match)
@@ -262,19 +276,22 @@ def get_prediction(api_key: str, match: dict) -> dict:
             "generated_at": beijing_time(),
             "cached": False,
         }
+    reuse_seconds = prediction_reuse_seconds(match)
     now = datetime.now(timezone.utc).timestamp()
     cached = PREDICTION_CACHE.get(key)
-    if cached and now - cached["ts"] < PREDICTION_REUSE_SECONDS:
+    if cached and now - cached["ts"] < reuse_seconds:
         payload = dict(cached["payload"])
         payload["cached"] = True
         payload["cache_source"] = "memory"
+        payload["cache_ttl_seconds"] = reuse_seconds
         return payload
-    persisted = get_recent_prediction_payload(match_id, PREDICTION_REUSE_SECONDS, prompt_version=PROMPT_VERSION)
+    persisted = get_recent_prediction_payload(match_id, reuse_seconds, prompt_version=PROMPT_VERSION)
     if persisted:
         PREDICTION_CACHE[key] = {"ts": now, "payload": persisted}
         payload = dict(persisted)
         payload["cached"] = True
         payload["cache_source"] = "sqlite"
+        payload["cache_ttl_seconds"] = reuse_seconds
         return payload
     intelligence = collect_match_intelligence(match)
     analysis = call_openai(api_key, match, intelligence)
@@ -285,6 +302,7 @@ def get_prediction(api_key: str, match: dict) -> dict:
         "sources": intelligence,
         "model": MODEL,
         "generated_at": beijing_time(),
+        "cache_ttl_seconds": reuse_seconds,
         "cached": False,
     }
     save_prediction(match, payload)
@@ -2435,9 +2453,17 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 def parse_beijing_kickoff(match: dict) -> datetime | None:
     value = str(match.get("time") or match.get("match_time") or "")
     parsed = re.search(r"(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})", value)
-    if not parsed:
+    if parsed:
+        year, month, day, hour, minute = map(int, parsed.groups())
+        return datetime(year, month, day, hour, minute, tzinfo=BEIJING_TZ)
+    date_value = str(match.get("d") or match.get("date") or "")
+    date_match = re.search(r"(\d{1,2})月(\d{1,2})日", date_value)
+    time_match = re.search(r"(\d{1,2}):(\d{2})", value)
+    if not date_match or not time_match:
         return None
-    year, month, day, hour, minute = map(int, parsed.groups())
+    year = datetime.now(BEIJING_TZ).year
+    month, day = map(int, date_match.groups())
+    hour, minute = map(int, time_match.groups())
     return datetime(year, month, day, hour, minute, tzinfo=BEIJING_TZ)
 
 
