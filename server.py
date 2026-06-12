@@ -44,6 +44,7 @@ PREDICTION_CACHE: dict[str, dict] = {}
 DATA_CACHE: dict[str, dict] = {}
 RATE_LIMITS: dict[str, list[float]] = {}
 RATE_LIMIT_LOCK = threading.Lock()
+SIM_STATE_LOCK = threading.Lock()
 SNAPSHOT_CACHE = {
     "odds": {"payload": None, "ts": 0.0, "error": ""},
     "results": {"payload": None, "ts": 0.0, "error": ""},
@@ -348,7 +349,7 @@ def save_prediction(match: dict, payload: dict) -> None:
 
 
 def get_history(match_id: str | None = None, limit: int = 50) -> list[dict]:
-    limit = max(1, min(limit, 5000))
+    limit = max(1, min(limit, 100))
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         if match_id:
@@ -378,6 +379,30 @@ def get_history(match_id: str | None = None, limit: int = 50) -> list[dict]:
             item["sources"] = json.loads(item.pop("sources_json") or "[]")[:5]
         except json.JSONDecodeError:
             item["sources"] = []
+        item["predicted_score"] = extract_predicted_score(analysis) or item.get("static_score", "")
+        pick_text = f"{analysis} {item.get('summary', '')}"
+        item["predicted_pick"] = next((label for label in ("主胜", "平局", "客胜") if label in pick_text), "")
+        result.append(item)
+    return result
+
+
+def get_prediction_matches(limit: int = 5000) -> list[dict]:
+    limit = max(1, min(limit, 5000))
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT match_id, home, away, static_score, summary, analysis, generated_at, created_ts
+            FROM predictions
+            ORDER BY created_ts DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        analysis = item.pop("analysis", "") or ""
         item["predicted_score"] = extract_predicted_score(analysis) or item.get("static_score", "")
         pick_text = f"{analysis} {item.get('summary', '')}"
         item["predicted_pick"] = next((label for label in ("主胜", "平局", "客胜") if label in pick_text), "")
@@ -494,24 +519,25 @@ def merge_client_account(current_account: dict, incoming_account: dict) -> dict:
 
 
 def save_client_sim_state(state: dict) -> dict:
-    account_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(state.get("account_id") or ""))[:48] or uuid.uuid4().hex[:12]
-    current = get_sim_state(account_id)
-    if not state.get("reset"):
-        state["account"] = merge_client_account(current.get("account") or {}, state.get("account") or {})
-        state["history"] = merge_unique_items(
-            state.get("history") if isinstance(state.get("history"), list) else [],
-            current.get("history") if isinstance(current.get("history"), list) else [],
-            50,
-        )
-        state["post_reviews"] = merge_unique_items(
-            state.get("post_reviews") if isinstance(state.get("post_reviews"), list) else [],
-            current.get("post_reviews") if isinstance(current.get("post_reviews"), list) else [],
-            100,
-        )
-    for key in ("settlement", "worker", "worker_log"):
-        if key in current:
-            state[key] = current[key]
-    return save_sim_state(state)
+    with SIM_STATE_LOCK:
+        account_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(state.get("account_id") or ""))[:48] or uuid.uuid4().hex[:12]
+        current = get_sim_state(account_id)
+        if not state.get("reset"):
+            state["account"] = merge_client_account(current.get("account") or {}, state.get("account") or {})
+            state["history"] = merge_unique_items(
+                state.get("history") if isinstance(state.get("history"), list) else [],
+                current.get("history") if isinstance(current.get("history"), list) else [],
+                50,
+            )
+            state["post_reviews"] = merge_unique_items(
+                state.get("post_reviews") if isinstance(state.get("post_reviews"), list) else [],
+                current.get("post_reviews") if isinstance(current.get("post_reviews"), list) else [],
+                100,
+            )
+        for key in ("settlement", "worker", "worker_log"):
+            if key in current:
+                state[key] = current[key]
+        return save_sim_state(state)
 
 
 def normalize_team_text(value: str) -> str:
@@ -839,47 +865,48 @@ def settle_parlay_bet(bet: dict, results: dict, account: dict) -> bool:
 
 
 def settle_sim_account(account_id: str | None) -> dict:
-    state = get_sim_state(account_id or "global")
-    account = state.get("account") or {"initial": 10000, "cash": 10000, "bets": []}
-    bets = account.get("bets") if isinstance(account.get("bets"), list) else []
     results = fetch_worldcup_results()
-    changed = 0
-    for bet in bets:
-        if bet.get("status") in ("已中", "未中", "已取消"):
-            continue
-        if bet.get("type") == "parlay":
-            if settle_parlay_bet(bet, results, account):
+    with SIM_STATE_LOCK:
+        state = get_sim_state(account_id or "global")
+        account = state.get("account") or {"initial": 10000, "cash": 10000, "bets": []}
+        bets = account.get("bets") if isinstance(account.get("bets"), list) else []
+        changed = 0
+        for bet in bets:
+            if bet.get("status") in ("已中", "未中", "已取消"):
+                continue
+            if bet.get("type") == "parlay":
+                if settle_parlay_bet(bet, results, account):
+                    changed += 1
+                continue
+            result = match_result_for_bet(bet, results)
+            if not result:
+                continue
+            if settle_single_bet(bet, result, account):
                 changed += 1
-            continue
-        result = match_result_for_bet(bet, results)
-        if not result:
-            continue
-        if settle_single_bet(bet, result, account):
-            changed += 1
-    state["account"] = account
-    state["stats"] = calculate_sim_stats(account)
-    state["settlement"] = {
-        "last_checked_at": beijing_time(),
-        "last_settled": changed,
-        "results_count": len(results),
-        "source": "worldcup26.ir",
-    }
-    reviews_added = generate_missing_post_reviews(state)
-    save_sim_state(state)
-    return {
-        "account_id": state.get("account_id"),
-        "settled": changed,
-        "reviews_added": reviews_added,
-        "results_count": len(results),
-        "account": account,
-        "history": state.get("history", []),
-        "post_reviews": state.get("post_reviews", []),
-        "stats": state.get("stats", {}),
-        "settlement": state.get("settlement", {}),
-        "worker": state.get("worker", {}),
-        "worker_log": state.get("worker_log", []),
-        "updated_at": beijing_time(),
-    }
+        state["account"] = account
+        state["stats"] = calculate_sim_stats(account)
+        state["settlement"] = {
+            "last_checked_at": beijing_time(),
+            "last_settled": changed,
+            "results_count": len(results),
+            "source": "worldcup26.ir",
+        }
+        reviews_added = generate_missing_post_reviews(state)
+        save_sim_state(state)
+        return {
+            "account_id": state.get("account_id"),
+            "settled": changed,
+            "reviews_added": reviews_added,
+            "results_count": len(results),
+            "account": account,
+            "history": state.get("history", []),
+            "post_reviews": state.get("post_reviews", []),
+            "stats": state.get("stats", {}),
+            "settlement": state.get("settlement", {}),
+            "worker": state.get("worker", {}),
+            "worker_log": state.get("worker_log", []),
+            "updated_at": beijing_time(),
+        }
 
 
 def get_sim_snapshot(account_id: str | None, auto_settle: bool = True) -> dict:
@@ -1794,7 +1821,7 @@ def _build_match_results() -> dict:
     results_raw = fetch_worldcup_results()
     if not results_raw:
         return {"results": [], "summary": "暂无已完赛数据。", "generated_at": beijing_time()}
-    all_preds = get_history(limit=5000)
+    all_preds = get_prediction_matches(limit=5000)
     result_en_to_cn = {v: k for k, v in TEAM_EN.items()}
     pred_by_key = {}
     for p in all_preds:
@@ -2553,11 +2580,16 @@ def run_auto_worker_once() -> dict:
                 "minEdgePct": 2,
             },
         })
-        applied = apply_auto_bet_plan_to_state(refreshed_state, matches, plan, signature, "后台自动触发")
-        placed = applied["placed"]
-        bet_summary = plan.get("summary") or ""
-        if plan.get("error"):
-            bet_error = bet_summary
+        with SIM_STATE_LOCK:
+            latest_state = get_sim_state(account_id)
+            if signature == latest_state.get("last_signature"):
+                bet_summary = "赔率签名已由其它任务处理，跳过重复下注。"
+            else:
+                applied = apply_auto_bet_plan_to_state(latest_state, matches, plan, signature, "后台自动触发")
+                placed = applied["placed"]
+                bet_summary = plan.get("summary") or ""
+                if plan.get("error"):
+                    bet_error = bet_summary
     elif matches and signature == state.get("last_signature"):
         bet_summary = "赔率签名未变化，跳过 LLM 自动下注。"
     elif not api_key:
@@ -2574,21 +2606,22 @@ def run_auto_worker_once() -> dict:
         "summary": bet_summary,
         "error": bet_error,
     }
-    state_after = get_sim_state(account_id)
-    worker_log = state_after.get("worker_log") if isinstance(state_after.get("worker_log"), list) else []
-    worker_log.insert(0, result)
-    state_after["worker_log"] = worker_log[:50]
-    state_after["worker"] = {
-        **(state_after.get("worker") if isinstance(state_after.get("worker"), dict) else {}),
-        "last_run_at": result["time"],
-        "last_odds_status": result["odds_status"],
-        "last_odds_count": result["odds_count"],
-        "last_settled": result["settled"],
-        "last_reviews_added": result["reviews_added"],
-        "last_placed": result["placed"],
-        "last_error": result["error"],
-    }
-    save_sim_state(state_after)
+    with SIM_STATE_LOCK:
+        state_after = get_sim_state(account_id)
+        worker_log = state_after.get("worker_log") if isinstance(state_after.get("worker_log"), list) else []
+        worker_log.insert(0, result)
+        state_after["worker_log"] = worker_log[:50]
+        state_after["worker"] = {
+            **(state_after.get("worker") if isinstance(state_after.get("worker"), dict) else {}),
+            "last_run_at": result["time"],
+            "last_odds_status": result["odds_status"],
+            "last_odds_count": result["odds_count"],
+            "last_settled": result["settled"],
+            "last_reviews_added": result["reviews_added"],
+            "last_placed": result["placed"],
+            "last_error": result["error"],
+        }
+        save_sim_state(state_after)
     print(
         f"[auto-worker] {result['time']} odds={result['odds_status']} count={result['odds_count']} "
         f"placed={result['placed']} settled={result['settled']} reviews={result['reviews_added']} "
