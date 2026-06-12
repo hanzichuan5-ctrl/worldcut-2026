@@ -41,12 +41,25 @@ CACHE_TTL_SECONDS = 600
 PROMPT_VERSION = "casual-v2"
 PREDICTION_CACHE: dict[str, dict] = {}
 DATA_CACHE: dict[str, dict] = {}
+RATE_LIMITS: dict[str, list[float]] = {}
+RATE_LIMIT_LOCK = threading.Lock()
+SNAPSHOT_CACHE = {
+    "odds": {"payload": None, "ts": 0.0, "error": ""},
+    "results": {"payload": None, "ts": 0.0, "error": ""},
+}
+SNAPSHOT_LOCK = threading.Lock()
 BEIJING_TZ = timezone(timedelta(hours=8))
 AUTO_BET_STRATEGY_VERSION = "research-v4-backend"
 AUTO_WORKER_ENABLED = os.getenv("AUTO_WORKER_ENABLED", "1") != "0"
 AUTO_WORKER_INTERVAL_SECONDS = max(60, int(os.getenv("AUTO_WORKER_INTERVAL_SECONDS", "600")))
 AUTO_WORKER_ACCOUNT_ID = os.getenv("AUTO_WORKER_ACCOUNT_ID", "global")
 AUTO_WORKER_STARTED = False
+SNAPSHOT_WORKER_STARTED = False
+PREDICT_RATE_LIMIT_COUNT = max(1, int(os.getenv("PREDICT_RATE_LIMIT_COUNT", "8")))
+PREDICT_RATE_LIMIT_SECONDS = max(10, int(os.getenv("PREDICT_RATE_LIMIT_SECONDS", "300")))
+AUTO_BET_RATE_LIMIT_SECONDS = max(60, int(os.getenv("AUTO_BET_RATE_LIMIT_SECONDS", "900")))
+ODDS_REFRESH_SECONDS = max(30, int(os.getenv("ODDS_REFRESH_SECONDS", "120")))
+RESULTS_REFRESH_SECONDS = max(60, int(os.getenv("RESULTS_REFRESH_SECONDS", "300")))
 TEAM_EN = {
     "墨西哥": "Mexico",
     "南非": "South Africa",
@@ -128,6 +141,28 @@ RULES = """worldcup-2026-predictor skill 分析流程：
 
 def beijing_time() -> str:
     return datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M 北京时间")
+
+
+def client_ip(handler: SimpleHTTPRequestHandler) -> str:
+    forwarded = handler.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    return forwarded or handler.client_address[0]
+
+
+def is_local_request(handler: SimpleHTTPRequestHandler) -> bool:
+    return handler.client_address[0] in ("127.0.0.1", "::1", "localhost")
+
+
+def rate_limited(bucket: str, limit: int, window_seconds: int) -> bool:
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    with RATE_LIMIT_LOCK:
+        hits = [ts for ts in RATE_LIMITS.get(bucket, []) if ts >= cutoff]
+        if len(hits) >= limit:
+            RATE_LIMITS[bucket] = hits
+            return True
+        hits.append(now)
+        RATE_LIMITS[bucket] = hits
+        return False
 
 
 def init_db() -> None:
@@ -1220,7 +1255,7 @@ def sporttery_fetch_payload() -> tuple[dict | None, str, str]:
     return None, source_url, " | ".join(errors)
 
 
-def sporttery_odds_snapshot() -> dict:
+def _build_sporttery_odds_snapshot() -> dict:
     data, url, err = sporttery_fetch_payload()
     if data is None:
         return {
@@ -1259,6 +1294,55 @@ def sporttery_odds_snapshot() -> dict:
         "generated_at": beijing_time(),
         "official_url": SPORTTERY_OFFICIAL_URL,
     }
+
+
+def cached_snapshot(name: str, builder, max_age_seconds: int) -> dict:
+    now = time.monotonic()
+    with SNAPSHOT_LOCK:
+        entry = SNAPSHOT_CACHE[name]
+        payload = entry.get("payload")
+        if payload is not None:
+            result = dict(payload)
+            age = now - float(entry.get("ts") or 0)
+            result["cache_age_seconds"] = round(age, 1)
+            result["cache_stale"] = age > max_age_seconds
+            if entry.get("error"):
+                result["cache_error"] = entry["error"]
+            return result
+    try:
+        payload = builder()
+        with SNAPSHOT_LOCK:
+            SNAPSHOT_CACHE[name] = {"payload": payload, "ts": time.monotonic(), "error": ""}
+        result = dict(payload)
+        result["cache_age_seconds"] = 0
+        result["cache_stale"] = False
+        return result
+    except Exception as exc:
+        with SNAPSHOT_LOCK:
+            entry = SNAPSHOT_CACHE[name]
+            entry["error"] = str(exc)[:240]
+            payload = entry.get("payload")
+        if payload is not None:
+            result = dict(payload)
+            result["cache_stale"] = True
+            result["cache_error"] = str(exc)[:240]
+            return result
+        raise
+
+
+def refresh_snapshot(name: str, builder) -> None:
+    try:
+        payload = builder()
+        with SNAPSHOT_LOCK:
+            SNAPSHOT_CACHE[name] = {"payload": payload, "ts": time.monotonic(), "error": ""}
+    except Exception as exc:
+        with SNAPSHOT_LOCK:
+            SNAPSHOT_CACHE[name]["error"] = str(exc)[:240]
+        print(f"[snapshot-worker] {beijing_time()} {name} error={exc}", flush=True)
+
+
+def sporttery_odds_snapshot() -> dict:
+    return cached_snapshot("odds", _build_sporttery_odds_snapshot, ODDS_REFRESH_SECONDS * 2)
 
 
 def sporttery_tool(home_cn: str, away_cn: str) -> list[dict]:
@@ -1632,7 +1716,7 @@ def json_response(handler: SimpleHTTPRequestHandler, status: int, payload: dict)
     handler.wfile.write(body)
 
 
-def get_match_results() -> dict:
+def _build_match_results() -> dict:
     results_raw = fetch_worldcup_results()
     if not results_raw:
         return {"results": [], "summary": "暂无已完赛数据。", "generated_at": beijing_time()}
@@ -1720,6 +1804,10 @@ def get_match_results() -> dict:
     }
 
 
+def get_match_results() -> dict:
+    return cached_snapshot("results", _build_match_results, RESULTS_REFRESH_SECONDS * 2)
+
+
 class Handler(SimpleHTTPRequestHandler):
     def translate_path(self, path: str) -> str:
         path = path.split("?", 1)[0].split("#", 1)[0]
@@ -1742,7 +1830,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/sim/account":
             params = parse.parse_qs(parsed.query)
-            auto_settle = params.get("settle", ["1"])[0] != "0"
+            auto_settle = params.get("settle", ["0"])[0] == "1"
             json_response(self, 200, get_sim_snapshot(params.get("account_id", ["global"])[0], auto_settle=auto_settle))
             return
         if parsed.path == "/api/sim/settle":
@@ -1750,6 +1838,9 @@ class Handler(SimpleHTTPRequestHandler):
             json_response(self, 200, settle_sim_account(params.get("account_id", ["global"])[0]))
             return
         if parsed.path == "/api/sim/worker/run":
+            if not is_local_request(self):
+                json_response(self, 403, {"error": "后台 worker 只能由服务器本机触发。"})
+                return
             json_response(self, 200, run_auto_worker_once())
             return
         if parsed.path == "/api/results":
@@ -1780,23 +1871,26 @@ class Handler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if self.path == "/api/auto-bet":
+                if not payload.get("manual"):
+                    json_response(self, 429, {"error": "前端自动下注已关闭；请使用手动按钮或等待后台定时 worker。"})
+                    return
+                ip = client_ip(self)
+                if rate_limited(f"auto-bet:{ip}", 1, AUTO_BET_RATE_LIMIT_SECONDS):
+                    json_response(self, 429, {"error": f"LLM 自动下注请求过于频繁，请稍后再试。"})
+                    return
                 result = get_auto_bet_plan(key, payload)
                 json_response(self, 200, result)
                 return
             if self.path == "/api/predict":
+                ip = client_ip(self)
+                if rate_limited(f"predict:{ip}", PREDICT_RATE_LIMIT_COUNT, PREDICT_RATE_LIMIT_SECONDS):
+                    json_response(self, 429, {"error": "AI 预测请求过于频繁，请稍后再试。"})
+                    return
                 result = get_prediction(key, payload.get("match") or {})
                 json_response(self, 200, result)
                 return
 
-            matches = payload.get("matches") or []
-            limit = int(payload.get("limit") or len(matches))
-            results = []
-            for match in matches[:limit]:
-                try:
-                    results.append(get_prediction(key, match))
-                except Exception as exc:
-                    results.append({"id": match.get("id"), "error": str(exc), "generated_at": beijing_time(), "model": MODEL})
-            json_response(self, 200, {"results": results, "model": MODEL, "generated_at": beijing_time()})
+            json_response(self, 410, {"error": "批量 AI 预测接口已停用，请逐场手动触发。"})
         except Exception as exc:
             json_response(self, 500, {"error": str(exc)})
 
@@ -2414,6 +2508,29 @@ def auto_worker_loop() -> None:
         time.sleep(AUTO_WORKER_INTERVAL_SECONDS)
 
 
+def snapshot_worker_loop() -> None:
+    next_odds = 0.0
+    next_results = 0.0
+    while True:
+        now = time.monotonic()
+        if now >= next_results:
+            refresh_snapshot("results", _build_match_results)
+            next_results = now + RESULTS_REFRESH_SECONDS
+        if now >= next_odds:
+            refresh_snapshot("odds", _build_sporttery_odds_snapshot)
+            next_odds = now + ODDS_REFRESH_SECONDS
+        time.sleep(5)
+
+
+def start_snapshot_worker() -> None:
+    global SNAPSHOT_WORKER_STARTED
+    if SNAPSHOT_WORKER_STARTED:
+        return
+    SNAPSHOT_WORKER_STARTED = True
+    thread = threading.Thread(target=snapshot_worker_loop, name="snapshot-worker", daemon=True)
+    thread.start()
+
+
 def start_auto_worker() -> None:
     global AUTO_WORKER_STARTED
     if AUTO_WORKER_STARTED or not AUTO_WORKER_ENABLED:
@@ -2425,6 +2542,7 @@ def start_auto_worker() -> None:
 
 def main() -> None:
     init_db()
+    start_snapshot_worker()
     start_auto_worker()
     port = int(os.getenv("PORT", "8765"))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)

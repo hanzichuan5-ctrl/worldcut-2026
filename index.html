@@ -775,6 +775,7 @@ async function llmAutoPlaceBets(options={}){
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         matches: pendingMatches(),
+        manual: !!options.manual,
         settings: {
           bankroll: simAccount.initial,
           cash: simAccount.cash,
