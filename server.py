@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import ipaddress
 import re
 import sqlite3
 import threading
@@ -58,6 +59,9 @@ SNAPSHOT_WORKER_STARTED = False
 PREDICT_RATE_LIMIT_COUNT = max(1, int(os.getenv("PREDICT_RATE_LIMIT_COUNT", "8")))
 PREDICT_RATE_LIMIT_SECONDS = max(10, int(os.getenv("PREDICT_RATE_LIMIT_SECONDS", "300")))
 AUTO_BET_RATE_LIMIT_SECONDS = max(60, int(os.getenv("AUTO_BET_RATE_LIMIT_SECONDS", "900")))
+SIM_SAVE_RATE_LIMIT_COUNT = max(5, int(os.getenv("SIM_SAVE_RATE_LIMIT_COUNT", "20")))
+SIM_SAVE_RATE_LIMIT_SECONDS = max(10, int(os.getenv("SIM_SAVE_RATE_LIMIT_SECONDS", "60")))
+SIM_SETTLE_RATE_LIMIT_SECONDS = max(10, int(os.getenv("SIM_SETTLE_RATE_LIMIT_SECONDS", "60")))
 ODDS_REFRESH_SECONDS = max(30, int(os.getenv("ODDS_REFRESH_SECONDS", "120")))
 RESULTS_REFRESH_SECONDS = max(60, int(os.getenv("RESULTS_REFRESH_SECONDS", "300")))
 TEAM_EN = {
@@ -144,8 +148,16 @@ def beijing_time() -> str:
 
 
 def client_ip(handler: SimpleHTTPRequestHandler) -> str:
-    forwarded = handler.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    return forwarded or handler.client_address[0]
+    remote = handler.client_address[0]
+    try:
+        remote_ip = ipaddress.ip_address(remote)
+    except ValueError:
+        return remote
+    if remote_ip.is_loopback or remote_ip.is_private:
+        forwarded = handler.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
+    return remote
 
 
 def is_local_request(handler: SimpleHTTPRequestHandler) -> bool:
@@ -438,9 +450,61 @@ def save_sim_state(state: dict) -> dict:
     return safe_state
 
 
+def item_identity(item: dict) -> str:
+    if item.get("key"):
+        return f"key:{item.get('key')}"
+    if item.get("id") or item.get("match") or item.get("pick"):
+        return f"bet:{item.get('id')}:{item.get('match')}:{item.get('pick')}:{item.get('placedAt')}"
+    return json.dumps(item, ensure_ascii=False, sort_keys=True)[:500]
+
+
+def merge_unique_items(primary: list, secondary: list, limit: int) -> list:
+    merged = []
+    seen = set()
+    for item in primary + secondary:
+        if not isinstance(item, dict):
+            continue
+        identity = item_identity(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(item)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def merge_client_account(current_account: dict, incoming_account: dict) -> dict:
+    if not isinstance(current_account, dict):
+        current_account = {"initial": 10000, "cash": 10000, "bets": []}
+    if not isinstance(incoming_account, dict):
+        incoming_account = {"initial": 10000, "cash": 10000, "bets": []}
+    merged = dict(incoming_account)
+    current_bets = current_account.get("bets") if isinstance(current_account.get("bets"), list) else []
+    incoming_bets = incoming_account.get("bets") if isinstance(incoming_account.get("bets"), list) else []
+    merged["bets"] = merge_unique_items(incoming_bets, current_bets, 500)
+    try:
+        merged["cash"] = min(float(incoming_account.get("cash") or 0), float(current_account.get("cash") or 0))
+    except (TypeError, ValueError):
+        merged["cash"] = incoming_account.get("cash", current_account.get("cash", 10000))
+    return merged
+
+
 def save_client_sim_state(state: dict) -> dict:
     account_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(state.get("account_id") or ""))[:48] or uuid.uuid4().hex[:12]
     current = get_sim_state(account_id)
+    if not state.get("reset"):
+        state["account"] = merge_client_account(current.get("account") or {}, state.get("account") or {})
+        state["history"] = merge_unique_items(
+            state.get("history") if isinstance(state.get("history"), list) else [],
+            current.get("history") if isinstance(current.get("history"), list) else [],
+            50,
+        )
+        state["post_reviews"] = merge_unique_items(
+            state.get("post_reviews") if isinstance(state.get("post_reviews"), list) else [],
+            current.get("post_reviews") if isinstance(current.get("post_reviews"), list) else [],
+            100,
+        )
     for key in ("settlement", "worker", "worker_log"):
         if key in current:
             state[key] = current[key]
@@ -1841,8 +1905,7 @@ class Handler(SimpleHTTPRequestHandler):
             json_response(self, 200, get_sim_snapshot(params.get("account_id", ["global"])[0], auto_settle=auto_settle))
             return
         if parsed.path == "/api/sim/settle":
-            params = parse.parse_qs(parsed.query)
-            json_response(self, 200, settle_sim_account(params.get("account_id", ["global"])[0]))
+            json_response(self, 405, {"error": "请使用 POST 触发结算。"})
             return
         if parsed.path == "/api/sim/worker/run":
             if not is_local_request(self):
@@ -1858,9 +1921,27 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path == "/api/sim/save":
             try:
+                ip = client_ip(self)
+                if rate_limited(f"sim-save:{ip}", SIM_SAVE_RATE_LIMIT_COUNT, SIM_SAVE_RATE_LIMIT_SECONDS):
+                    json_response(self, 429, {"error": "模拟账户保存过于频繁，请稍后再试。"})
+                    return
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 json_response(self, 200, save_client_sim_state(payload))
+            except Exception as exc:
+                json_response(self, 500, {"error": str(exc)})
+            return
+
+        if self.path == "/api/sim/settle":
+            try:
+                ip = client_ip(self)
+                if rate_limited(f"sim-settle:{ip}", 1, SIM_SETTLE_RATE_LIMIT_SECONDS):
+                    json_response(self, 429, {"error": "结算请求过于频繁，请稍后再试。"})
+                    return
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}") if length else {}
+                account_id = payload.get("account_id") or "global"
+                json_response(self, 200, settle_sim_account(account_id))
             except Exception as exc:
                 json_response(self, 500, {"error": str(exc)})
             return
