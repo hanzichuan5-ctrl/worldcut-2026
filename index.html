@@ -1256,9 +1256,9 @@ async function loadResults(options={}){
     summary.innerHTML = `
       <span>已完赛 <b>${data.total_finished}</b> 场</span>
       <span>有预测 <b>${data.total_predicted}</b> 场</span>
-      <span>方向命中 <b class="hit">${data.hits}</b></span>
-      <span>方向未中 <b class="miss">${data.misses}</b></span>
-      <span>方向命中率 <b style="color:${color}">${acc}</b></span>
+      <span>比分命中 <b class="hit">${data.hits}</b></span>
+      <span>比分未中 <b class="miss">${data.misses}</b></span>
+      <span>比分命中率 <b style="color:${color}">${acc}</b></span>
       <span style="color:var(--muted);font-size:12px">${data.generated_at || ''}</span>
     `;
     const header = `<div class="result-row"><div>比赛</div><div>比分</div><div>预测比分</div><div>预测方向</div><div>结果</div></div>`;
@@ -1270,19 +1270,19 @@ async function loadResults(options={}){
       const teams = r.home === r.home_en ? homeName : `${homeName} <span style="color:var(--muted);font-size:12px">${homeEn}</span>`;
       const away = r.away === r.away_en ? awayName : `${awayName} <span style="color:var(--muted);font-size:12px">${awayEn}</span>`;
       let resultCell = '';
-      const scoreBadge = r.score_hit === true
-        ? ' <span class="hit" style="font-size:12px">比分命中</span>'
-        : r.score_hit === false
-          ? ' <span class="miss" style="font-size:12px">比分未中</span>'
+      const directionBadge = r.pick_hit === true
+        ? ' <span class="hit" style="font-size:12px">方向对</span>'
+        : r.pick_hit === false
+          ? ' <span class="miss" style="font-size:12px">方向错</span>'
           : '';
-      if (r.pick_hit === true) resultCell = '<span class="hit">✅ 方向命中</span>';
-      else if (r.pick_hit === false) resultCell = '<span class="miss">❌ 方向未中</span>';
+      if (r.score_hit === true) resultCell = '<span class="hit">✅ 命中</span>';
+      else if (r.score_hit === false) resultCell = '<span class="miss">❌ 未中</span>';
       else resultCell = '<span class="skip">⚪ 无预测</span>';
       return `<div class="result-row">
         <div><strong>${teams}</strong> <span class="vs">vs</span> <strong>${away}</strong></div>
         <div><strong>${escapeHtml(r.actual_score || '-')}</strong></div>
-        <div>${escapeHtml(r.predicted_score || '-')}${scoreBadge}</div>
-        <div>${escapeHtml(r.predicted_pick || '-')}</div>
+        <div>${escapeHtml(r.predicted_score || '-')}</div>
+        <div>${escapeHtml(r.predicted_pick || '-')}${directionBadge}</div>
         <div>${resultCell}</div>
       </div>`;
     }).join('');

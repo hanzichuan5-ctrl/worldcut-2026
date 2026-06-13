@@ -1918,15 +1918,19 @@ def _build_match_results() -> dict:
             "score_hit": score_hit,
             "source": r.get("source", ""),
         })
-    total_pred = sum(1 for i in items if i["predicted_pick"])
-    hits = sum(1 for i in items if i["pick_hit"] is True)
-    misses = sum(1 for i in items if i["pick_hit"] is False)
+    total_pred = sum(1 for i in items if i["predicted_score"])
+    hits = sum(1 for i in items if i["score_hit"] is True)
+    misses = sum(1 for i in items if i["score_hit"] is False)
+    direction_hits = sum(1 for i in items if i["pick_hit"] is True)
+    direction_misses = sum(1 for i in items if i["pick_hit"] is False)
     return {
         "results": items,
         "total_finished": len(items),
         "total_predicted": total_pred,
         "hits": hits,
         "misses": misses,
+        "direction_hits": direction_hits,
+        "direction_misses": direction_misses,
         "accuracy": round(hits / total_pred * 100, 1) if total_pred else None,
         "generated_at": beijing_time(),
     }
