@@ -561,7 +561,14 @@ def save_client_sim_state(state: dict) -> dict:
 
 
 def normalize_team_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(value or "").lower())
+    text = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(value or "").lower())
+    aliases = {
+        "沙特阿拉伯": "沙特",
+        "刚果金": "刚果金",
+        "刚果民主共和国": "刚果金",
+        "乌兹别克斯坦": "乌兹别克",
+    }
+    return aliases.get(text, text)
 
 
 EXTRA_CN_TO_EN = {
@@ -1368,8 +1375,8 @@ def choose_sporttery_pool(row: dict) -> tuple[dict, str, str]:
 def parse_sporttery_matches(data: dict) -> list[dict]:
     matches = []
     for row in walk_json(data):
-        home = sporttery_pick(row, ("homeTeam", "homeTeamName", "homeTeamAbbName", "homeTeamAllName", "hostName", "homeName", "h_cn", "home_team"))
-        away = sporttery_pick(row, ("awayTeam", "awayTeamName", "awayTeamAbbName", "awayTeamAllName", "guestName", "awayName", "a_cn", "away_team"))
+        home = sporttery_pick(row, ("homeTeamAllName", "homeTeamName", "homeTeam", "homeTeamAbbName", "hostName", "homeName", "h_cn", "home_team"))
+        away = sporttery_pick(row, ("awayTeamAllName", "awayTeamName", "awayTeam", "awayTeamAbbName", "guestName", "awayName", "a_cn", "away_team"))
         if not home or not away:
             continue
         had, market_code, goal_line = choose_sporttery_pool(row)

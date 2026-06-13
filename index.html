@@ -604,7 +604,13 @@ function renderOddsTrend(match){
     </div>`;
 }
 function normalizeTeamName(name){
-  return String(name || '').replace(/\s+/g, '').replace(/队$/, '');
+  const text = String(name || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '').replace(/队$/, '');
+  const aliases = {
+    '沙特阿拉伯': '沙特',
+    '刚果民主共和国': '刚果金',
+    '乌兹别克斯坦': '乌兹别克'
+  };
+  return aliases[text] || text;
 }
 function findSportteryMatch(item){
   const home = normalizeTeamName(item.home);
@@ -644,8 +650,8 @@ function parseSportteryPayload(payload){
   }
   const parsed = [];
   for (const row of walkJson(payload)) {
-    const home = sportteryPick(row, ['homeTeam','homeTeamName','homeTeamAbbName','homeTeamAllName','hostName','homeName','h_cn','home_team']);
-    const away = sportteryPick(row, ['awayTeam','awayTeamName','awayTeamAbbName','awayTeamAllName','guestName','awayName','a_cn','away_team']);
+    const home = sportteryPick(row, ['homeTeamAllName','homeTeamName','homeTeam','homeTeamAbbName','hostName','homeName','h_cn','home_team']);
+    const away = sportteryPick(row, ['awayTeamAllName','awayTeamName','awayTeam','awayTeamAbbName','guestName','awayName','a_cn','away_team']);
     if (!home || !away) continue;
     const selected = chooseSportteryPool(row);
     const had = selected.pool;
