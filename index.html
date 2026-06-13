@@ -583,17 +583,45 @@ function parseSportteryPayload(payload){
 function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞彩网固定奖金'){
   const valid = (items || []).filter(item => Array.isArray(item.decimal) && item.decimal.length >= 3);
   matches.length = 0;
-  if (valid.length) {
-    valid.forEach((item, idx) => matches.push(sportteryToMatch(item, idx)));
-  } else {
-    staticMatches.forEach(match => matches.push({...match, odds: [...match.odds], probs: [...match.probs]}));
+  staticMatches.forEach(match => matches.push({
+    ...match,
+    odds: [...match.odds],
+    probs: [...match.probs],
+    baseOdds: [...match.baseOdds || match.odds],
+    oddsDecimal: (match.oddsDecimal || match.odds.map(americanToDecimal)).slice(),
+    oddsTrend: [],
+    oddsSource: '静态兜底'
+  }));
+  let applied = 0;
+  for (const [idx, item] of valid.entries()) {
+    const target = findSportteryMatch(item);
+    if (!target) continue;
+    const market = sportteryToMatch(item, idx);
+    Object.assign(target, {
+      matchNo: market.matchNo,
+      odds: market.odds,
+      oddsDecimal: market.oddsDecimal,
+      oddsTrend: market.oddsTrend,
+      oddsSource: market.oddsSource,
+      pick: market.pick,
+      api: market.api,
+      score: market.score,
+      conf: market.conf,
+      probs: market.probs,
+      why: market.why
+    });
+    applied++;
   }
   refreshDateFilters();
   const source = document.getElementById('oddsSource');
-  if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusPrefix}，已切换为体彩售卖列表 ${valid.length} 场。`;
+  const ignored = valid.length - applied;
+  if (source) {
+    const ignoredText = ignored > 0 ? `，忽略非赛程/未匹配 ${ignored} 场` : '';
+    source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusPrefix}，保留完整赛程 ${matches.length} 场，已匹配体彩赔率 ${applied} 场${ignoredText}。`;
+  }
   renderFilters();
   render();
-  return valid.length;
+  return applied;
 }
 function toggleOddsImport(){
   document.getElementById('oddsImport')?.classList.toggle('show');
