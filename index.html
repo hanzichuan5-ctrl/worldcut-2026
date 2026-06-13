@@ -717,11 +717,9 @@ async function refreshSportteryOdds(){
     if (!res.ok) throw new Error(data.error || '请求失败');
     let applied = 0;
     if (data.status === 'ok') applied = applySportteryItems(data.matches || []);
-    if (source) {
+    if (source && data.status !== 'ok') {
       const filteredText = data.filtered_finished_count ? `，已移出已完赛 ${data.filtered_finished_count} 场` : '';
-      const statusText = data.status === 'ok'
-        ? `已接入中国体育彩票竞彩网固定奖金，已切换为待赛体彩列表 ${applied} 场${filteredText}。`
-        : `体彩源当前不可用：${data.note || data.status || '未知状态'}；可点“导入体彩 JSON”手动导入，页面先使用静态兜底赔率。`;
+      const statusText = `体彩源当前不可用：${data.note || data.status || '未知状态'}${filteredText}；可点“导入体彩 JSON”手动导入，页面先使用静态兜底赔率。`;
       source.querySelector('span').innerHTML = `<b>赔率源：</b>${escapeHtml(statusText)}`;
     }
     if (data.status !== 'ok') render();
