@@ -839,9 +839,33 @@ def generate_missing_post_reviews(state: dict) -> int:
     return added
 
 
+def result_pick_for_market(result: dict, market_code: str | None = None, goal_line=None) -> str:
+    if str(market_code or "HAD").upper() != "HHAD":
+        return result.get("pick") or result_pick(int(result.get("home_score", 0)), int(result.get("away_score", 0)))
+    try:
+        adjusted_home = float(result.get("home_score", 0)) + float(goal_line or 0)
+        away = float(result.get("away_score", 0))
+    except (TypeError, ValueError):
+        return result.get("pick") or ""
+    if adjusted_home > away:
+        return "主胜"
+    if adjusted_home == away:
+        return "平局"
+    return "客胜"
+
+
+def market_label_for_bet(item: dict) -> str:
+    if str(item.get("marketCode") or "HAD").upper() != "HHAD":
+        return "胜平负"
+    goal_line = str(item.get("goalLine") or "").strip()
+    return f"让球胜平负({goal_line})" if goal_line else "让球胜平负"
+
+
 def settle_single_bet(bet: dict, result: dict, account: dict) -> bool:
     bet["result"] = f"{result['home_score']}-{result['away_score']}"
-    if result["pick"] == bet.get("pick"):
+    actual_pick = result_pick_for_market(result, bet.get("marketCode"), bet.get("goalLine"))
+    bet["actualPick"] = actual_pick
+    if actual_pick == bet.get("pick"):
         bet["status"] = "已中"
         payout = round(float(bet.get("stake", 0)) * float(bet.get("odds", 1)))
         profit = payout - round(float(bet.get("stake", 0)))
@@ -868,11 +892,12 @@ def settle_parlay_bet(bet: dict, results: dict, account: dict) -> bool:
             "match": leg.get("match"),
             "pick": leg.get("pick"),
             "result": f"{result['home_score']}-{result['away_score']}",
-            "actual": result.get("pick"),
+            "actual": result_pick_for_market(result, leg.get("marketCode"), leg.get("goalLine")),
+            "market": market_label_for_bet(leg),
         }
         for leg, result in settled_legs
     ]
-    all_hit = all(result.get("pick") == leg.get("pick") for leg, result in settled_legs)
+    all_hit = all(result_pick_for_market(result, leg.get("marketCode"), leg.get("goalLine")) == leg.get("pick") for leg, result in settled_legs)
     if all_hit:
         bet["status"] = "已中"
         payout = round(float(bet.get("stake", 0)) * float(bet.get("odds", 1)))
@@ -938,7 +963,9 @@ def get_sim_snapshot(account_id: str | None, auto_settle: bool = True) -> dict:
 
 
 def bet_key_for_pick(match: dict, pick: str) -> str:
-    return f"{match.get('id')}:{match.get('home')}-{match.get('away')}:{pick}"
+    market = str(match.get("marketCode") or "HAD")
+    goal_line = str(match.get("goalLine") or "")
+    return f"{match.get('id')}:{match.get('home')}-{match.get('away')}:{market}:{goal_line}:{pick}"
 
 
 def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, signature: str, trigger: str) -> dict:
@@ -972,6 +999,9 @@ def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, s
             "id": match.get("id"),
             "match": f"{match.get('home')} vs {match.get('away')}",
             "pick": pick,
+            "marketCode": match.get("marketCode") or "HAD",
+            "marketName": match.get("marketName") or "胜平负",
+            "goalLine": match.get("goalLine") or "",
             "odds": round(odds, 2),
             "edge": item.get("edge_pct", 0),
             "probability": item.get("probability", 0),
@@ -1006,6 +1036,9 @@ def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, s
                 "home": match.get("home"),
                 "away": match.get("away"),
                 "pick": pick,
+                "marketCode": match.get("marketCode") or "HAD",
+                "marketName": match.get("marketName") or "胜平负",
+                "goalLine": match.get("goalLine") or "",
                 "odds": round(odds, 2),
             })
         if len(legs) < 2:
@@ -1256,6 +1289,11 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
     decimal = item.get("decimal") or []
     probs = probs_from_decimal(decimal)
     pick, api_pick = pick_from_probs(item.get("home", ""), item.get("away", ""), probs)
+    market_code = str(item.get("market_code") or "HAD").upper()
+    goal_line = str(item.get("goal_line") or "").strip()
+    market_name = "让球胜平负" if market_code == "HHAD" else "胜平负"
+    market_suffix = f"({goal_line})" if goal_line else ""
+    odds_source = f"中国体育彩票竞彩网{market_name}固定奖金"
     return {
         "id": f"tc-{idx + 1}",
         "d": cn_date(item.get("match_time")),
@@ -1266,13 +1304,16 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "venue": f"{item.get('league') or '世界杯'} · 中国体育彩票",
         "odds": item.get("american") or [decimal_to_american(value) for value in decimal],
         "oddsDecimal": decimal,
-        "oddsSource": "中国体育彩票竞彩网固定奖金",
+        "oddsSource": odds_source,
+        "marketCode": market_code,
+        "marketName": market_name,
+        "goalLine": goal_line,
         "pick": pick,
         "api": api_pick,
         "score": score_from_market(api_pick, probs),
         "conf": conf_from_prob(max(probs)),
         "probs": probs,
-        "why": f"以中国体育彩票竞彩网当前固定奖金为主数据源。{api_pick}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。",
+        "why": f"以中国体育彩票竞彩网当前{market_name}{market_suffix}固定奖金为主数据源。{api_pick}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。",
     }
 
 
@@ -1302,6 +1343,28 @@ def sporttery_pick(row: dict, keys: tuple[str, ...]):
     return None
 
 
+def choose_sporttery_pool(row: dict) -> tuple[dict, str, str]:
+    candidates: list[dict] = []
+    odds_list = row.get("oddsList")
+    if isinstance(odds_list, list):
+        candidates.extend(item for item in odds_list if isinstance(item, dict))
+    for key in ("had", "HAD", "spf", "hhad", "HHAD", "odds"):
+        value = row.get(key)
+        if isinstance(value, list):
+            candidates.extend(item for item in value if isinstance(item, dict))
+        elif isinstance(value, dict):
+            candidates.append(value)
+    if not candidates:
+        candidates.append(row)
+    for wanted in ("HAD", "HHAD"):
+        for item in candidates:
+            code = str(item.get("poolCode") or item.get("pool_code") or "").upper()
+            if code == wanted or (wanted == "HAD" and not code):
+                goal_line = str(item.get("goalLine") or item.get("goal_line") or "").strip()
+                return item, wanted, goal_line
+    return {}, "", ""
+
+
 def parse_sporttery_matches(data: dict) -> list[dict]:
     matches = []
     for row in walk_json(data):
@@ -1309,17 +1372,7 @@ def parse_sporttery_matches(data: dict) -> list[dict]:
         away = sporttery_pick(row, ("awayTeam", "awayTeamName", "awayTeamAbbName", "awayTeamAllName", "guestName", "awayName", "a_cn", "away_team"))
         if not home or not away:
             continue
-        had = row.get("had") or row.get("HAD") or row.get("spf") or row.get("odds") or {}
-        odds_list = row.get("oddsList")
-        if isinstance(odds_list, list):
-            for odds_item in odds_list:
-                if str(odds_item.get("poolCode", "")).upper() == "HAD":
-                    had = odds_item
-                    break
-        if isinstance(had, list) and had:
-            had = had[0]
-        if not isinstance(had, dict):
-            had = row
+        had, market_code, goal_line = choose_sporttery_pool(row)
         win = normalize_sporttery_decimal(sporttery_pick(had, ("h", "home", "win", "had_h", "h_sp", "a")))
         draw = normalize_sporttery_decimal(sporttery_pick(had, ("d", "draw", "had_d", "d_sp", "b")))
         lose = normalize_sporttery_decimal(sporttery_pick(had, ("a", "away", "lose", "had_a", "a_sp", "c")))
@@ -1336,6 +1389,9 @@ def parse_sporttery_matches(data: dict) -> list[dict]:
                 sporttery_pick(row, ("matchDate", "businessDate", "date")),
                 sporttery_pick(row, ("matchTime", "time")),
             ) if part),
+            "market_code": market_code or "HAD",
+            "market_name": "让球胜平负" if market_code == "HHAD" else "胜平负",
+            "goal_line": goal_line,
             "decimal": [win, draw, lose],
             "american": [decimal_to_american(win), decimal_to_american(draw), decimal_to_american(lose)],
             "source": "中国体育彩票竞彩网固定奖金",

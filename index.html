@@ -516,6 +516,10 @@ function sportteryToMatch(item, idx){
   const decimal = item.decimal || [];
   const probs = probsFromDecimal(decimal);
   const pick = pickFromProbs(item.home, item.away, probs);
+  const marketCode = String(item.market_code || item.marketCode || 'HAD').toUpperCase();
+  const goalLine = String(item.goal_line || item.goalLine || '').trim();
+  const marketName = marketCode === 'HHAD' ? '让球胜平负' : '胜平负';
+  const marketSuffix = goalLine ? `(${goalLine})` : '';
   return {
     id: `tc-${idx + 1}`,
     d: cnDate(item.match_time),
@@ -527,14 +531,22 @@ function sportteryToMatch(item, idx){
     odds: item.american || decimal.map(decimalToAmerican),
     oddsDecimal: decimal,
     oddsTrend: item.trend || [],
-    oddsSource: '中国体育彩票竞彩网固定奖金',
+    oddsSource: `中国体育彩票竞彩网${marketName}固定奖金`,
+    marketCode,
+    marketName,
+    goalLine,
     pick: pick.pick,
     api: pick.api,
     score: scoreFromMarket(pick.api, probs),
     conf: confFromProb(Math.max(...probs)),
     probs,
-    why: `以中国体育彩票竞彩网当前固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
+    why: `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
   };
+}
+function marketLabel(match){
+  const marketName = match.marketName || (match.marketCode === 'HHAD' ? '让球胜平负' : '胜平负');
+  const suffix = match.goalLine ? `(${match.goalLine})` : '';
+  return `${marketName}${suffix}`;
 }
 function oddsLabel(odds){
   if (odds === null || odds === undefined) return '-';
@@ -574,7 +586,7 @@ function renderSparkline(values, color){
 function renderOddsTrend(match){
   const labels = [`${match.home}胜`, '平局', `${match.away}胜`];
   const colors = ['#13795b', '#b8871e', '#2366a8'];
-  const isSporttery = match.oddsSource === '中国体育彩票竞彩网固定奖金';
+  const isSporttery = String(match.oddsSource || '').includes('中国体育彩票竞彩网');
   const trendCount = (match.oddsTrend || []).length;
   return `
     <div class="odds-trend">
@@ -635,20 +647,41 @@ function parseSportteryPayload(payload){
     const home = sportteryPick(row, ['homeTeam','homeTeamName','homeTeamAbbName','homeTeamAllName','hostName','homeName','h_cn','home_team']);
     const away = sportteryPick(row, ['awayTeam','awayTeamName','awayTeamAbbName','awayTeamAllName','guestName','awayName','a_cn','away_team']);
     if (!home || !away) continue;
-    let had = row.had || row.HAD || row.spf || row.odds || row;
-    if (Array.isArray(row.oddsList)) {
-      const hadItem = row.oddsList.find(item => String(item.poolCode || '').toUpperCase() === 'HAD');
-      if (hadItem) had = hadItem;
-    }
-    if (Array.isArray(had) && had.length) had = had[0];
-    if (!had || typeof had !== 'object') had = row;
+    const selected = chooseSportteryPool(row);
+    const had = selected.pool;
     const win = normalizeSportteryDecimal(sportteryPick(had, ['h','home','win','had_h','h_sp','a']));
     const draw = normalizeSportteryDecimal(sportteryPick(had, ['d','draw','had_d','d_sp','b']));
     const lose = normalizeSportteryDecimal(sportteryPick(had, ['a','away','lose','had_a','a_sp','c']));
     if (!win || !draw || !lose) continue;
-    parsed.push({home: String(home), away: String(away), decimal: [win, draw, lose], source: '中国体育彩票竞彩网固定奖金'});
+    parsed.push({
+      home: String(home),
+      away: String(away),
+      decimal: [win, draw, lose],
+      market_code: selected.marketCode || 'HAD',
+      goal_line: selected.goalLine || '',
+      source: '中国体育彩票竞彩网固定奖金'
+    });
   }
   return parsed;
+}
+function chooseSportteryPool(row){
+  const candidates = [];
+  if (Array.isArray(row.oddsList)) candidates.push(...row.oddsList.filter(item => item && typeof item === 'object'));
+  for (const key of ['had','HAD','spf','hhad','HHAD','odds']) {
+    const value = row[key];
+    if (Array.isArray(value)) candidates.push(...value.filter(item => item && typeof item === 'object'));
+    else if (value && typeof value === 'object') candidates.push(value);
+  }
+  if (!candidates.length) candidates.push(row);
+  for (const wanted of ['HAD', 'HHAD']) {
+    for (const item of candidates) {
+      const code = String(item.poolCode || item.pool_code || '').toUpperCase();
+      if (code === wanted || (wanted === 'HAD' && !code)) {
+        return {pool: item, marketCode: wanted, goalLine: String(item.goalLine || item.goal_line || '').trim()};
+      }
+    }
+  }
+  return {pool: {}, marketCode: '', goalLine: ''};
 }
 function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞彩网固定奖金'){
   const valid = (items || []).filter(item => Array.isArray(item.decimal) && item.decimal.length >= 3);
@@ -673,6 +706,9 @@ function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞
       oddsDecimal: market.oddsDecimal,
       oddsTrend: market.oddsTrend,
       oddsSource: market.oddsSource,
+      marketCode: market.marketCode,
+      marketName: market.marketName,
+      goalLine: market.goalLine,
       pick: market.pick,
       api: market.api,
       score: market.score,
@@ -829,7 +865,7 @@ function betKey(match){
   return `${match.id}:${match.home}-${match.away}:${match.api}`;
 }
 function betKeyForPick(match, pick){
-  return `${match.id}:${match.home}-${match.away}:${pick}`;
+  return `${match.id}:${match.home}-${match.away}:${match.marketCode || 'HAD'}:${match.goalLine || ''}:${pick}`;
 }
 function simulateMatch(match){
   const bankroll = readBankrollInput();
@@ -918,6 +954,9 @@ function applyLlmBetPlan(plan, options={}){
       id: match.id,
       match: `${match.home} vs ${match.away}`,
       pick: item.pick,
+      marketCode: match.marketCode || 'HAD',
+      marketName: match.marketName || '胜平负',
+      goalLine: match.goalLine || '',
       odds: Number(decimalOdds.toFixed(2)),
       edge: Number(item.edge_pct || 0),
       probability: Number(item.probability || 0),
@@ -945,6 +984,9 @@ function applyLlmBetPlan(plan, options={}){
         home: match.home,
         away: match.away,
         pick: leg.pick,
+        marketCode: match.marketCode || 'HAD',
+        marketName: match.marketName || '胜平负',
+        goalLine: match.goalLine || '',
         odds: Number(odds.toFixed(2))
       };
     }).filter(Boolean);
@@ -1185,7 +1227,7 @@ function render(){
   const list = active==='全部' ? matches : matches.filter(m=>m.d===active);
   document.getElementById('cards').innerHTML = list.map(m=>`
     <article class="card">
-      <div class="card-head"><div><div class="date">北京时间 ${m.time}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${m.api}</div></div><div class="venue">${m.venue}<br>${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
+      <div class="card-head"><div><div class="date">北京时间 ${m.time}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${marketLabel(m)} · ${m.api}</div></div><div class="venue">${m.venue}<br>${String(m.oddsSource || '').includes('中国体育彩票竞彩网') ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
       <div class="teams">
         <div class="match"><div class="team"><strong>${m.home}</strong><span>主队</span></div><div class="vs">对阵</div><div class="team" style="text-align:right"><strong>${m.away}</strong><span>客队</span></div></div>
         <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span><span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
