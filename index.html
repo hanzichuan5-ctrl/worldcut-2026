@@ -315,32 +315,102 @@
     </div>
   </main>
 <script>
+function scheduleMatch(id, dateTime, group, home, away, venue, result=''){
+  const [datePart] = String(dateTime).split(' ');
+  const dateMatch = datePart.match(/^2026-(\d{2})-(\d{2})$/);
+  const d = dateMatch ? `${Number(dateMatch[1])}月${Number(dateMatch[2])}日` : datePart;
+  const settled = Boolean(result);
+  return {
+    id,
+    d,
+    time: dateTime,
+    home,
+    away,
+    venue: `${group} · ${venue}`,
+    odds: [120, 220, 220],
+    pick: settled ? '已完赛' : '待预测',
+    api: settled ? '赛果' : '待分析',
+    score: settled ? result : '待预测',
+    conf: settled ? '赛果' : '待评估',
+    probs: [36, 32, 32],
+    why: settled
+      ? `官方赛程已完赛，赛果 ${result}。已完赛比赛不再触发新的 LLM 预测。`
+      : '完整世界杯小组赛赛程兜底记录；若体彩接口返回本场固定奖金，会自动覆盖赔率和盘口信号。'
+  };
+}
 const matches = [
-  {id:1, d:'6月11日', time:'15:00', home:'墨西哥', away:'南非', venue:'阿兹特克体育场', odds:[-315,350,900], pick:'墨西哥', api:'主胜', score:'2-0', conf:'高', probs:[67,22,11], why:'主办国开幕战、市场强烈倾向墨西哥；南非有身体和转换能力，但客场环境和整体深度处劣势。'},
-  {id:2, d:'6月11日', time:'21:00', home:'加拿大', away:'卡塔尔', venue:'BMO 球场', odds:[-205,300,550], pick:'加拿大', api:'主胜', score:'2-1', conf:'中高', probs:[57,25,18], why:'加拿大主场和速度优势明显；卡塔尔杯赛经验好，平局风险存在。'},
-  {id:3, d:'6月12日', time:'12:00', home:'美国', away:'巴拉圭', venue:'SoFi 体育场', odds:[-145,250,360], pick:'美国', api:'主胜', score:'2-1', conf:'中', probs:[48,28,24], why:'美国主场和阵容运动能力占优，但巴拉圭防守韧性强，比赛可能比盘口更胶着。'},
-  {id:4, d:'6月12日', time:'15:00', home:'德国', away:'库拉索', venue:'阿兹特克体育场', odds:[-1050,900,2500], pick:'德国', api:'主胜', score:'4-0', conf:'极高', probs:[84,11,5], why:'实力层级差距极大，德国只要正常轮换也应控制比赛；风险主要是效率而非胜负。'},
-  {id:5, d:'6月12日', time:'18:00', home:'乌拉圭', away:'沙特阿拉伯', venue:'AT&T 体育场', odds:[-370,400,1000], pick:'乌拉圭', api:'主胜', score:'2-0', conf:'高', probs:[69,21,10], why:'乌拉圭压迫、对抗和前场质量优势明确；沙特需要低位防守和反击效率才有机会。'},
-  {id:6, d:'6月12日', time:'21:00', home:'日本', away:'荷兰', venue:'玫瑰碗体育场', odds:[475,290,-190], pick:'荷兰', api:'客胜', score:'1-2', conf:'中', probs:[22,27,51], why:'荷兰个人能力和定位球优势更强；日本技术纪律好，具备制造冷门和平局的条件。'},
-  {id:7, d:'6月13日', time:'12:00', home:'比利时', away:'埃及', venue:'吉列体育场', odds:[-230,320,650], pick:'比利时', api:'主胜', score:'2-1', conf:'中高', probs:[59,25,16], why:'比利时中前场创造力更好；埃及若核心球员状态在线，反击会提高不确定性。'},
-  {id:8, d:'6月13日', time:'15:00', home:'瑞士', away:'奥地利', venue:'李维斯体育场', odds:[170,205,165], pick:'平局', api:'平局', score:'1-1', conf:'中', probs:[34,32,34], why:'两队实力接近、盘口也接近均势；小组首战保守倾向提升平局概率。'},
-  {id:9, d:'6月13日', time:'18:00', home:'法国', away:'塞内加尔', venue:'大都会人寿体育场', odds:[-345,400,850], pick:'法国', api:'主胜', score:'2-0', conf:'高', probs:[68,21,11], why:'法国阵容厚度和速度冲击优势突出；塞内加尔身体条件好，但需要限制法国转换空间。'},
-  {id:10, d:'6月13日', time:'21:00', home:'阿根廷', away:'阿尔及利亚', venue:'箭头体育场', odds:[-500,550,1200], pick:'阿根廷', api:'主胜', score:'2-0', conf:'高', probs:[74,17,9], why:'阿根廷控球、比赛管理和关键球能力更稳；阿尔及利亚的机会在于定位球和反击。'},
-  {id:11, d:'6月14日', time:'12:00', home:'意大利', away:'澳大利亚', venue:'林肯金融球场', odds:[-230,320,650], pick:'意大利', api:'主胜', score:'1-0', conf:'中高', probs:[58,27,15], why:'意大利防守结构和技术质量更好；澳大利亚对抗强，低比分概率较高。'},
-  {id:12, d:'6月14日', time:'15:00', home:'挪威', away:'加纳', venue:'NRG 体育场', odds:[115,220,240], pick:'挪威', api:'主胜', score:'2-1', conf:'中', probs:[41,29,30], why:'盘口略偏挪威，锋线终结能力是关键；加纳身体和反击会让比赛开放。'},
-  {id:13, d:'6月14日', time:'18:00', home:'葡萄牙', away:'乌兹别克斯坦', venue:'硬石体育场', odds:[-600,600,1500], pick:'葡萄牙', api:'主胜', score:'3-0', conf:'极高', probs:[78,15,7], why:'葡萄牙阵容深度和进攻选择明显高一档；乌兹别克斯坦需要极高防守执行力。'},
-  {id:14, d:'6月14日', time:'21:00', home:'摩洛哥', away:'海地', venue:'梅赛德斯-奔驰体育场', odds:[-300,360,850], pick:'摩洛哥', api:'主胜', score:'2-0', conf:'高', probs:[66,23,11], why:'摩洛哥近年大赛稳定性和防守质量强；海地需要依靠速度和混战机会。'},
-  {id:15, d:'6月15日', time:'12:00', home:'英格兰', away:'克罗地亚', venue:'AT&T 体育场', odds:[-160,280,390], pick:'英格兰', api:'主胜', score:'2-1', conf:'中', probs:[50,28,22], why:'英格兰阵容厚度与前场个人能力更强；克罗地亚大赛经验会压低胜率差距。'},
-  {id:16, d:'6月15日', time:'15:00', home:'丹麦', away:'突尼斯', venue:'大都会人寿体育场', odds:[-175,275,450], pick:'丹麦', api:'主胜', score:'1-0', conf:'中', probs:[52,29,19], why:'丹麦组织和定位球更可靠；突尼斯防守纪律好，低比分和平局风险存在。'},
-  {id:17, d:'6月15日', time:'18:00', home:'苏格兰', away:'科特迪瓦', venue:'吉列体育场', odds:[210,220,125], pick:'科特迪瓦', api:'客胜', score:'1-2', conf:'中', probs:[28,29,43], why:'科特迪瓦身体和前场冲击更强；苏格兰定位球和对抗能制造拉锯。'},
-  {id:18, d:'6月15日', time:'21:00', home:'巴西', away:'阿联酋', venue:'SoFi 体育场', odds:[-850,800,2200], pick:'巴西', api:'主胜', score:'3-0', conf:'极高', probs:[82,12,6], why:'巴西个人能力、边路爆点和压制力明显领先；主要看能否早进球降低意外。'},
-  {id:19, d:'6月16日', time:'12:00', home:'西班牙', away:'佛得角', venue:'BC Place 体育场', odds:[-800,700,2000], pick:'西班牙', api:'主胜', score:'3-0', conf:'极高', probs:[81,13,6], why:'西班牙控球压迫和整体技术优势巨大；佛得角需要极高反击效率。'},
-  {id:20, d:'6月16日', time:'15:00', home:'塞尔维亚', away:'新西兰', venue:'BMO 球场', odds:[-290,350,750], pick:'塞尔维亚', api:'主胜', score:'2-0', conf:'高', probs:[64,24,12], why:'塞尔维亚身体、定位球和锋线高度优势明显；新西兰要依赖防守阵型完整度。'},
-  {id:21, d:'6月16日', time:'18:00', home:'哥伦比亚', away:'北马其顿', venue:'李维斯体育场', odds:[-290,350,750], pick:'哥伦比亚', api:'主胜', score:'2-0', conf:'高', probs:[64,24,12], why:'哥伦比亚技术和转换速度更强；北马其顿若守住前 60 分钟可提高平局机会。'},
-  {id:22, d:'6月16日', time:'21:00', home:'伊朗', away:'牙买加', venue:'阿克伦体育场', odds:[-130,245,340], pick:'伊朗', api:'主胜', score:'1-0', conf:'中', probs:[46,30,24], why:'伊朗防守组织和大赛经验略优；牙买加速度威胁让结果不算稳。'},
-  {id:23, d:'6月17日', time:'12:00', home:'卡塔尔', away:'瑞士', venue:'BMO 球场', odds:[650,320,-240], pick:'瑞士', api:'客胜', score:'0-2', conf:'中高', probs:[16,25,59], why:'瑞士稳定性、身体和中场控制更好；卡塔尔需要把比赛拖成低节奏。'},
-  {id:24, d:'6月17日', time:'15:00', home:'墨西哥', away:'加拿大', venue:'BC Place 体育场', odds:[115,220,240], pick:'墨西哥', api:'主胜', score:'2-1', conf:'中', probs:[41,29,30], why:'盘口微妙但墨西哥大赛经验和开局动能略占优；加拿大主场因素和速度让这场接近五五开。'},
-  {id:25, d:'6月17日', time:'18:00', home:'塞内加尔', away:'荷兰', venue:'大都会人寿体育场', odds:[425,290,-175], pick:'荷兰', api:'客胜', score:'1-2', conf:'中', probs:[23,28,49], why:'荷兰整体技术和中后场出球质量略胜；塞内加尔对抗强，若先破门会显著改变走势。'}
+  scheduleMatch(1, '2026-06-12 03:00', 'A组', '墨西哥', '南非', '墨西哥城', '2-0'),
+  scheduleMatch(2, '2026-06-13 02:00', 'A组', '韩国', '捷克', '瓜达拉哈拉', '2-1'),
+  scheduleMatch(3, '2026-06-13 05:00', 'B组', '加拿大', '波黑', '多伦多', '1-1'),
+  scheduleMatch(4, '2026-06-13 09:00', 'D组', '美国', '巴拉圭', '洛杉矶', '4-1'),
+  scheduleMatch(5, '2026-06-14 03:00', 'B组', '卡塔尔', '瑞士', '圣克拉拉'),
+  scheduleMatch(6, '2026-06-14 06:00', 'C组', '巴西', '摩洛哥', '新泽西'),
+  scheduleMatch(7, '2026-06-14 09:00', 'C组', '海地', '苏格兰', '福克斯堡'),
+  scheduleMatch(8, '2026-06-14 12:00', 'D组', '澳大利亚', '土耳其', '温哥华'),
+  scheduleMatch(9, '2026-06-15 01:00', 'E组', '德国', '库拉索', '休斯敦'),
+  scheduleMatch(10, '2026-06-15 04:00', 'F组', '荷兰', '日本', '阿灵顿'),
+  scheduleMatch(11, '2026-06-15 07:00', 'E组', '科特迪瓦', '厄瓜多尔', '费城'),
+  scheduleMatch(12, '2026-06-15 10:00', 'F组', '瑞典', '突尼斯', '瓜达卢佩'),
+  scheduleMatch(13, '2026-06-16 00:00', 'H组', '西班牙', '佛得角', '亚特兰大'),
+  scheduleMatch(14, '2026-06-16 03:00', 'G组', '比利时', '埃及', '西雅图'),
+  scheduleMatch(15, '2026-06-16 06:00', 'H组', '沙特', '乌拉圭', '迈阿密'),
+  scheduleMatch(16, '2026-06-16 09:00', 'G组', '伊朗', '新西兰', '洛杉矶'),
+  scheduleMatch(17, '2026-06-17 03:00', 'I组', '法国', '塞内加尔', '新泽西'),
+  scheduleMatch(18, '2026-06-17 06:00', 'I组', '伊拉克', '挪威', '福克斯堡'),
+  scheduleMatch(19, '2026-06-17 09:00', 'J组', '阿根廷', '阿尔及利亚', '堪萨斯城'),
+  scheduleMatch(20, '2026-06-17 12:00', 'J组', '奥地利', '约旦', '圣克拉拉'),
+  scheduleMatch(21, '2026-06-18 01:00', 'K组', '葡萄牙', '刚果金', '休斯敦'),
+  scheduleMatch(22, '2026-06-18 04:00', 'L组', '英格兰', '克罗地亚', '阿灵顿'),
+  scheduleMatch(23, '2026-06-18 07:00', 'L组', '加纳', '巴拿马', '多伦多'),
+  scheduleMatch(24, '2026-06-18 10:00', 'K组', '乌兹别克', '哥伦比亚', '墨西哥城'),
+  scheduleMatch(25, '2026-06-19 00:00', 'A组', '捷克', '南非', '亚特兰大'),
+  scheduleMatch(26, '2026-06-19 03:00', 'B组', '瑞士', '波黑', '洛杉矶'),
+  scheduleMatch(27, '2026-06-19 06:00', 'B组', '加拿大', '卡塔尔', '温哥华'),
+  scheduleMatch(28, '2026-06-19 09:00', 'A组', '墨西哥', '韩国', '瓜达拉哈拉'),
+  scheduleMatch(29, '2026-06-20 03:00', 'D组', '美国', '澳大利亚', '西雅图'),
+  scheduleMatch(30, '2026-06-20 06:00', 'C组', '苏格兰', '摩洛哥', '福克斯堡'),
+  scheduleMatch(31, '2026-06-20 08:30', 'C组', '巴西', '海地', '费城'),
+  scheduleMatch(32, '2026-06-20 11:00', 'D组', '土耳其', '巴拉圭', '圣克拉拉'),
+  scheduleMatch(33, '2026-06-21 01:00', 'A组', '荷兰', '瑞典', '休斯敦'),
+  scheduleMatch(34, '2026-06-21 04:00', 'E组', '德国', '科特迪瓦', '多伦多'),
+  scheduleMatch(35, '2026-06-21 08:00', 'E组', '厄瓜多尔', '库拉索', '堪萨斯城'),
+  scheduleMatch(36, '2026-06-21 12:00', 'F组', '突尼斯', '日本', '瓜达卢佩'),
+  scheduleMatch(37, '2026-06-22 00:00', 'H组', '西班牙', '沙特', '亚特兰大'),
+  scheduleMatch(38, '2026-06-22 03:00', 'G组', '比利时', '伊朗', '洛杉矶'),
+  scheduleMatch(39, '2026-06-22 06:00', 'H组', '乌拉圭', '佛得角', '迈阿密'),
+  scheduleMatch(40, '2026-06-22 09:00', 'G组', '新西兰', '埃及', '温哥华'),
+  scheduleMatch(41, '2026-06-23 01:00', 'J组', '阿根廷', '奥地利', '阿灵顿'),
+  scheduleMatch(42, '2026-06-23 05:00', 'I组', '法国', '伊拉克', '费城'),
+  scheduleMatch(43, '2026-06-23 08:00', 'I组', '挪威', '塞内加尔', '多伦多'),
+  scheduleMatch(44, '2026-06-23 11:00', 'J组', '约旦', '阿尔及利亚', '圣克拉拉'),
+  scheduleMatch(45, '2026-06-24 01:00', 'K组', '葡萄牙', '乌兹别克', '休斯敦'),
+  scheduleMatch(46, '2026-06-24 04:00', 'L组', '英格兰', '加纳', '福克斯堡'),
+  scheduleMatch(47, '2026-06-24 07:00', 'L组', '巴拿马', '克罗地亚', '福克斯堡'),
+  scheduleMatch(48, '2026-06-24 10:00', 'K组', '哥伦比亚', '刚果金', '瓜达拉哈拉'),
+  scheduleMatch(49, '2026-06-25 03:00', 'B组', '瑞士', '加拿大', '温哥华'),
+  scheduleMatch(50, '2026-06-25 03:00', 'B组', '波黑', '卡塔尔', '西雅图'),
+  scheduleMatch(51, '2026-06-25 06:00', 'C组', '摩洛哥', '海地', '亚特兰大'),
+  scheduleMatch(52, '2026-06-25 06:00', 'C组', '苏格兰', '巴西', '迈阿密'),
+  scheduleMatch(53, '2026-06-25 09:00', 'A组', '南非', '韩国', '瓜达卢佩'),
+  scheduleMatch(54, '2026-06-25 09:00', 'A组', '捷克', '墨西哥', '墨西哥城'),
+  scheduleMatch(55, '2026-06-26 04:00', 'E组', '库拉索', '科特迪瓦', '费城'),
+  scheduleMatch(56, '2026-06-26 04:00', 'E组', '厄瓜多尔', '德国', '新泽西'),
+  scheduleMatch(57, '2026-06-26 07:00', 'F组', '突尼斯', '荷兰', '堪萨斯城'),
+  scheduleMatch(58, '2026-06-26 07:00', 'F组', '日本', '瑞典', '阿灵顿'),
+  scheduleMatch(59, '2026-06-26 10:00', 'D组', '土耳其', '美国', '洛杉矶'),
+  scheduleMatch(60, '2026-06-26 10:00', 'D组', '巴拉圭', '澳大利亚', '圣克拉拉'),
+  scheduleMatch(61, '2026-06-27 03:00', 'I组', '挪威', '法国', '福克斯堡'),
+  scheduleMatch(62, '2026-06-27 03:00', 'I组', '塞内加尔', '伊拉克', '多伦多'),
+  scheduleMatch(63, '2026-06-27 08:00', 'H组', '佛得角', '沙特', '休斯敦'),
+  scheduleMatch(64, '2026-06-27 08:00', 'H组', '乌拉圭', '西班牙', '瓜达拉哈拉'),
+  scheduleMatch(65, '2026-06-27 11:00', 'G组', '新西兰', '比利时', '温哥华'),
+  scheduleMatch(66, '2026-06-27 11:00', 'G组', '埃及', '伊朗', '西雅图'),
+  scheduleMatch(67, '2026-06-28 05:00', 'L组', '巴拿马', '英格兰', '新泽西'),
+  scheduleMatch(68, '2026-06-28 05:00', 'L组', '克罗地亚', '加纳', '费城'),
+  scheduleMatch(69, '2026-06-28 07:30', 'K组', '哥伦比亚', '葡萄牙', '迈阿密'),
+  scheduleMatch(70, '2026-06-28 07:30', 'K组', '刚果金', '乌兹别克', '亚特兰大'),
+  scheduleMatch(71, '2026-06-28 10:00', 'J组', '阿尔及利亚', '奥地利', '堪萨斯城'),
+  scheduleMatch(72, '2026-06-28 10:00', 'J组', '约旦', '阿根廷', '阿灵顿')
 ];
 const staticMatches = matches.map(match => ({...match, odds: [...match.odds], probs: [...match.probs]}));
 let dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
@@ -1117,7 +1187,7 @@ function render(){
   const list = active==='全部' ? matches : matches.filter(m=>m.d===active);
   document.getElementById('cards').innerHTML = list.map(m=>`
     <article class="card">
-      <div class="card-head"><div><div class="date">${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? `北京时间 ${m.time}` : `${m.d} · 美东时间 ${m.time}`}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${m.api}</div></div><div class="venue">${m.venue}<br>${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
+      <div class="card-head"><div><div class="date">北京时间 ${m.time}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${m.api}</div></div><div class="venue">${m.venue}<br>${m.oddsSource === '中国体育彩票竞彩网固定奖金' ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
       <div class="teams">
         <div class="match"><div class="team"><strong>${m.home}</strong><span>主队</span></div><div class="vs">对阵</div><div class="team" style="text-align:right"><strong>${m.away}</strong><span>客队</span></div></div>
         <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span><span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
@@ -1133,7 +1203,7 @@ function render(){
       <div class="history-panel" id="history-${m.id}"></div>
     </article>`).join('');
   document.getElementById('statMatches').textContent = matches.length;
-  document.getElementById('statFavs').textContent = matches.filter(m=>m.pick !== '平局').length;
+  document.getElementById('statFavs').textContent = matches.filter(m=>!['平局', '待预测', '已完赛'].includes(m.pick)).length;
   document.querySelectorAll('[data-ai]').forEach(btn => {
     btn.onclick = () => runAiReview(btn.dataset.ai, btn);
   });
