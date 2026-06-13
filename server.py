@@ -1889,7 +1889,9 @@ def _build_match_results() -> dict:
                     break
         predicted_score = ""
         predicted_pick = ""
+        actual_score = f"{r['home_score']}-{r['away_score']}"
         pick_hit = None
+        score_hit = None
         if pred_match:
             predicted_score = normalize_score_text(pred_match.get("predicted_score") or pred_match.get("static_score", ""))
             predicted_pick = pred_match.get("predicted_pick") or ""
@@ -1901,16 +1903,19 @@ def _build_match_results() -> dict:
                         break
             if predicted_pick:
                 pick_hit = (predicted_pick == r["pick"])
+            if predicted_score:
+                score_hit = (predicted_score == actual_score)
         items.append({
             "home": home_cn,
             "away": away_cn,
             "home_en": home_en,
             "away_en": away_en,
-            "actual_score": f"{r['home_score']}-{r['away_score']}",
+            "actual_score": actual_score,
             "actual_pick": r["pick"],
             "predicted_score": predicted_score,
             "predicted_pick": predicted_pick,
             "pick_hit": pick_hit,
+            "score_hit": score_hit,
             "source": r.get("source", ""),
         })
     total_pred = sum(1 for i in items if i["predicted_pick"])
