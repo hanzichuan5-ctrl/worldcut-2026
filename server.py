@@ -2615,6 +2615,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 - 你自己选择下注模式：单关、2串1、3串1、混合、全部跳过。
 - 只能下注 betting_allowed=true 的比赛；已开赛或开赛前30分钟内必须跳过。
 - 串关最多3场，不能包含 betting_allowed=false 的比赛。
+- 同一个串关里不能放同一场比赛的不同玩法；同一场最多出现一次。
 - 单场下注不能超过可用资金的 {max_stake_pct}%。
 - 体彩固定奖金天然含水位，页面概率多为盘口隐含概率归一化；不要机械要求每场都有严格数学正期望。
 - 如果比赛列表包含 market_code、goal_line、supports_single、supports_all_up、odds_update_time，必须用于判断投注模式和盘口方向。
@@ -2823,8 +2824,11 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             odds = decimal_odds_for_pick(match_by_id[mid], pick)
             if not odds:
                 continue
+            fixture_key = f"{normalize_team_text(match_by_id[mid].get('home', ''))}-{normalize_team_text(match_by_id[mid].get('away', ''))}"
+            if any(item.get("fixture_key") == fixture_key for item in legs):
+                continue
             combined_odds *= odds
-            legs.append({"id": match_by_id[mid].get("id"), "pick": pick, "odds": round(odds, 2)})
+            legs.append({"id": match_by_id[mid].get("id"), "pick": pick, "odds": round(odds, 2), "fixture_key": fixture_key})
         if len(legs) not in (2, 3):
             continue
         try:
@@ -2841,7 +2845,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             "type": f"{len(legs)}串1",
             "sporttery_play": sporttery_play,
             "pass_type": f"{len(legs)}串1",
-            "legs": legs,
+            "legs": [{key: value for key, value in leg.items() if key != "fixture_key"} for leg in legs],
             "combined_odds": round(combined_odds, 2),
             "stake": round(stake),
             "reason": str(parlay.get("reason") or "LLM 串关模拟下注")[:160],
