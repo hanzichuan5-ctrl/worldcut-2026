@@ -983,6 +983,12 @@ def bet_key_for_pick(match: dict, pick: str) -> str:
     return f"{match.get('id')}:{match.get('home')}-{match.get('away')}:{market}:{goal_line}:{pick}"
 
 
+def bet_leg_key(leg: dict) -> str:
+    market = str(leg.get("marketCode") or "HAD")
+    goal_line = str(leg.get("goalLine") or "")
+    return f"{leg.get('id')}:{market}:{goal_line}:{leg.get('pick')}"
+
+
 def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, signature: str, trigger: str) -> dict:
     account = state.get("account") if isinstance(state.get("account"), dict) else {"initial": 10000, "cash": 10000, "bets": []}
     bets = account.get("bets") if isinstance(account.get("bets"), list) else []
@@ -1033,9 +1039,6 @@ def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, s
         placed += 1
     for parlay in plan.get("parlays", []) if isinstance(plan.get("parlays"), list) else []:
         raw_legs = parlay.get("legs") if isinstance(parlay.get("legs"), list) else []
-        key = "parlay:" + "|".join(f"{leg.get('id')}-{leg.get('pick')}" for leg in raw_legs)
-        if key in existing:
-            continue
         legs = []
         combined_odds = 1.0
         for leg in raw_legs[:3]:
@@ -1059,6 +1062,9 @@ def apply_auto_bet_plan_to_state(state: dict, matches: list[dict], plan: dict, s
                 "odds": round(odds, 2),
             })
         if len(legs) < 2:
+            continue
+        key = "parlay:" + "|".join(bet_leg_key(leg) for leg in legs)
+        if key in existing:
             continue
         try:
             stake = min(round(float(parlay.get("stake") or 0)), int(float(account.get("cash") or 0)))

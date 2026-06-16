@@ -168,6 +168,7 @@
     .sim-ledger-row { display: grid; grid-template-columns: 1.2fr .8fr .8fr .8fr; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.35; }
     .sim-ledger-row:first-child { border-top: 0; background: #fbf8ef; color: var(--ink); font-weight: 800; }
     .sim-ledger-row b { color: var(--ink); }
+    .sim-ledger-row button { margin-top: 6px; min-height: 28px; padding: 0 8px; font-size: 12px; }
     .llm-history { display: none; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
     .llm-history.show { display: block; }
     .llm-history-item { padding: 10px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -1057,6 +1058,32 @@ function clearCalculatorSelections(){
   calcCandidateKeys.clear();
   renderCalculator();
 }
+function normalizeCalculatorPassType(value){
+  const text = String(value || '').trim();
+  if (!text || text === '单关' || text.toLowerCase() === 'single') return 'single';
+  const matched = text.match(/(\d+)\s*(?:串|x)\s*1/i);
+  return matched ? `${matched[1]}x1` : 'single';
+}
+function denormalizeCalculatorPassType(value){
+  const normalized = normalizeCalculatorPassType(value);
+  return normalized === 'single' ? '单关' : normalized.replace('x', '串');
+}
+function simMatchIdForCalculator(match){
+  const scheduled = findScheduleMatch(matches, match?.home, match?.away);
+  return scheduled?.id ?? match?.id;
+}
+function calculatorBetSessionId(){
+  return `calc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+function simLegKey(leg){
+  return [
+    leg?.id ?? '',
+    leg?.marketId ?? '',
+    leg?.marketCode || 'HAD',
+    leg?.goalLine || '',
+    leg?.pick || ''
+  ].join(':');
+}
 function selectCalculatorPredictions(){
   calcSelections.clear();
   if (!calcCandidateKeys.size) {
@@ -1200,7 +1227,10 @@ function simLegFromCalculator(entry){
   const match = entry.leg.match;
   const odd = entry.odd;
   return {
-    id: match.id,
+    id: simMatchIdForCalculator(match),
+    marketId: match.id,
+    calculatorKey: entry.leg.key,
+    matchNo: match.matchNo || '',
     match: `${match.home} vs ${match.away}`,
     home: match.home,
     away: match.away,
@@ -1226,12 +1256,9 @@ function addCalculatorSelectionsToSim(){
     setCalculatorStatus(`当前会生成 ${calc.betCount} 张模拟单，数量太多；请减少选择或降低过关组合。`);
     return;
   }
-  if (calc.stake > Number(simAccount.cash || 0)) {
-    setCalculatorStatus(`模拟盘可用资金不足：需要 ${formatCalcMoney(calc.stake)}，当前可用 ${formatCalcMoney(simAccount.cash)}。`);
-    return;
-  }
   const existing = new Set((simAccount.bets || []).map(bet => bet.key));
   const nowText = new Date().toLocaleString('zh-CN', {hour12: false});
+  const sessionId = calculatorBetSessionId();
   let placed = 0;
   let requiredStake = 0;
   const newBets = [];
@@ -1242,14 +1269,25 @@ function addCalculatorSelectionsToSim(){
         if (existing.has(key)) continue;
         const stake = 2 * calc.times;
         requiredStake += stake;
+        existing.add(key);
         newBets.push({
           key,
-          id: leg.match.id,
+          id: simMatchIdForCalculator(leg.match),
+          marketId: leg.match.id,
+          calculatorKey: leg.key,
+          calculatorSessionId: sessionId,
+          calculatorSource: 'calculator',
           match: `${leg.match.home} vs ${leg.match.away}`,
+          home: leg.match.home,
+          away: leg.match.away,
           pick: odd.label,
           marketCode: leg.match.marketCode || 'HAD',
           marketName: leg.match.marketName || '胜平负',
           goalLine: leg.match.goalLine || '',
+          sportteryPlay: marketLabel(leg.match),
+          passType: '单关',
+          calculatorPassType: 'single',
+          times: calc.times,
           odds: Number(odd.odds.toFixed(2)),
           stake,
           potentialProfit: Math.round(stake * (odd.odds - 1)),
@@ -1267,17 +1305,24 @@ function addCalculatorSelectionsToSim(){
       for (const pickCombo of cartesianOdds(combo)) {
         const legsForBet = pickCombo.map(simLegFromCalculator);
         const combinedOdds = legsForBet.reduce((acc, leg) => acc * Number(leg.odds || 1), 1);
-        const key = calculatorBetKey([calc.passType, calc.times, ...legsForBet.map(leg => `${leg.id}-${leg.pick}`)]);
+        const key = calculatorBetKey([calc.passType, calc.times, ...legsForBet.map(simLegKey)]);
         if (existing.has(key)) continue;
         const stake = 2 * calc.times;
         requiredStake += stake;
+        existing.add(key);
         newBets.push({
           key,
           id: key,
           type: 'parlay',
+          calculatorSessionId: sessionId,
+          calculatorSource: 'calculator',
           match: legsForBet.map(leg => `${leg.match} ${leg.pick}`).join(' × '),
           legs: legsForBet,
           pick: `${calc.passSize}串1`,
+          sportteryPlay: '混合过关',
+          passType: denormalizeCalculatorPassType(calc.passType),
+          calculatorPassType: calc.passType,
+          times: calc.times,
           odds: Number(combinedOdds.toFixed(2)),
           stake,
           potentialProfit: Math.round(stake * (combinedOdds - 1)),
@@ -1321,6 +1366,16 @@ function findCalculatorMatchForBet(bet){
   const source = calculatorSourceMatches();
   const homeAway = bet.home && bet.away ? {home: bet.home, away: bet.away} : matchNameParts(bet.match);
   if (!homeAway.home || !homeAway.away) return null;
+  const marketId = String(bet.marketId || '').trim();
+  if (marketId) {
+    const byMarketId = source.find(match => String(match.id) === marketId);
+    if (byMarketId) return byMarketId;
+  }
+  const calculatorKey = String(bet.calculatorKey || '').trim();
+  if (calculatorKey) {
+    const byKey = source.find(match => calculatorMatchKey(match) === calculatorKey);
+    if (byKey) return byKey;
+  }
   return source.find(match => {
     const h = normalizeTeamName(homeAway.home);
     const a = normalizeTeamName(homeAway.away);
@@ -1332,12 +1387,60 @@ function findCalculatorMatchForBet(bet){
     return sameTeams && sameMarket && sameLine;
   });
 }
-async function syncSimBetsToCalculator(){
+function pendingSimBets(){
+  return (simAccount.bets || []).filter(bet => !['已中', '未中', '已取消'].includes(bet.status));
+}
+function simBetIdentity(bet){
+  return String(bet?.key || bet?.id || '');
+}
+function chooseSimBetsForCalculator(targetKey=''){
+  const pending = pendingSimBets();
+  if (!pending.length) return [];
+  const requested = String(targetKey || '');
+  const anchor = requested
+    ? pending.find(bet => simBetIdentity(bet) === requested)
+    : pending.at(-1);
+  if (!anchor) return [];
+  if (anchor.calculatorSessionId) {
+    return pending.filter(bet => bet.calculatorSessionId === anchor.calculatorSessionId);
+  }
+  return [anchor];
+}
+function inferCalculatorTimesFromBets(bets){
+  const values = bets
+    .map(bet => Number(bet.times || bet.calculatorTimes || 0))
+    .filter(value => Number.isFinite(value) && value > 0);
+  if (values.length && values.every(value => value === values[0])) return values[0];
+  const calcBets = bets.filter(bet => bet.calculatorSource === 'calculator' || bet.agent === '体彩计算器');
+  const stakes = calcBets.map(bet => Number(bet.stake || 0)).filter(value => Number.isFinite(value) && value > 0);
+  if (stakes.length && stakes.every(value => value === stakes[0])) return Math.max(1, Math.round(stakes[0] / 2));
+  return null;
+}
+function inferCalculatorPassTypeFromBets(bets){
+  const explicit = bets
+    .map(bet => bet.calculatorPassType || bet.passType || bet.pick)
+    .find(Boolean);
+  if (explicit) return normalizeCalculatorPassType(explicit);
+  return bets.some(bet => bet.type === 'parlay') ? normalizeCalculatorPassType(bets[0]?.pick || '2串1') : 'single';
+}
+function applyCalculatorControlsFromSim(bets){
+  const times = inferCalculatorTimesFromBets(bets);
+  const timesInput = document.getElementById('calcTimes');
+  if (times && timesInput) timesInput.value = String(times);
+  const passType = inferCalculatorPassTypeFromBets(bets);
+  updateCalculatorPassOptions(selectedCalculatorLegs());
+  const select = document.getElementById('calcPassType');
+  if (select && [...select.options].some(option => option.value === passType)) {
+    select.value = passType;
+  }
+}
+async function syncSimBetsToCalculator(targetKey=''){
   if (!calcMatches.length) await loadSportteryCalculator({refresh:true});
-  const pending = (simAccount.bets || []).filter(bet => !['已中', '未中', '已取消'].includes(bet.status));
+  const pending = chooseSimBetsForCalculator(targetKey);
   calcSelections.clear();
   calcCandidateKeys.clear();
   let synced = 0;
+  const syncedFixtures = new Set();
   for (const bet of pending) {
     const entries = bet.type === 'parlay' && Array.isArray(bet.legs) ? bet.legs : [bet];
     for (const entry of entries) {
@@ -1351,11 +1454,15 @@ async function syncSimBetsToCalculator(){
       calcCandidateKeys.add(key);
       calcSelections.set(key, [...current].sort((a, b) => a - b));
       synced++;
+      syncedFixtures.add(calculatorFixtureKey(match));
     }
   }
-  setActiveView('calculator');
+  setActiveView('calculator', {skipRefresh:true});
+  applyCalculatorControlsFromSim(pending);
   renderCalculator();
-  setCalculatorStatus(synced ? `已从模拟盘同步 ${synced} 个待赛选择。` : '模拟盘暂无可同步到当前体彩计算器的待赛选择。');
+  const scopeText = targetKey ? '指定模拟单' : '最近一批模拟单';
+  const passText = denormalizeCalculatorPassType(document.getElementById('calcPassType')?.value || 'single');
+  setCalculatorStatus(synced ? `已从${scopeText}同步 ${syncedFixtures.size} 场 / ${synced} 个选择，过关方式 ${passText}。` : '模拟盘暂无可同步到当前体彩计算器的待赛选择。');
 }
 function renderCalculatorSummary(calc){
   const el = document.getElementById('calcSummary');
@@ -1666,8 +1773,12 @@ function applyLlmBetPlan(plan, options={}){
     simAccount.cash -= stake;
     simAccount.bets.push({
       key,
-      id: match.id,
+      id: simMatchIdForCalculator(match),
+      marketId: match.id,
+      calculatorKey: String(match.id).startsWith('tc-') ? calculatorMatchKey(match) : '',
       match: `${match.home} vs ${match.away}`,
+      home: match.home,
+      away: match.away,
       pick: item.pick,
       marketCode: match.marketCode || 'HAD',
       marketName: match.marketName || '胜平负',
@@ -1684,11 +1795,10 @@ function applyLlmBetPlan(plan, options={}){
       status: '待赛',
       agent: 'LLM'
     });
+    existing.add(key);
     placed++;
   }
   for (const parlay of plan.parlays || []) {
-    const key = `parlay:${(parlay.legs || []).map(leg => `${leg.id}-${leg.pick}`).join('|')}`;
-    if (existing.has(key)) continue;
     const stake = Math.min(Math.round(Number(parlay.stake || 0)), Math.floor(simAccount.cash));
     if (stake <= 0 || !Array.isArray(parlay.legs) || parlay.legs.length < 2) continue;
     const legs = parlay.legs.map(leg => {
@@ -1696,7 +1806,9 @@ function applyLlmBetPlan(plan, options={}){
       if (!match || !['主胜','平局','客胜'].includes(leg.pick)) return null;
       const odds = Number(leg.odds || decimalForPick(match, leg.pick));
       return {
-        id: match.id,
+        id: simMatchIdForCalculator(match),
+        marketId: match.id,
+        calculatorKey: String(match.id).startsWith('tc-') ? calculatorMatchKey(match) : '',
         match: `${match.home} vs ${match.away}`,
         home: match.home,
         away: match.away,
@@ -1708,6 +1820,8 @@ function applyLlmBetPlan(plan, options={}){
       };
     }).filter(Boolean);
     if (legs.length < 2) continue;
+    const key = `parlay:${legs.map(simLegKey).join('|')}`;
+    if (existing.has(key)) continue;
     const combinedOdds = Number(parlay.combined_odds || legs.reduce((acc, leg) => acc * Number(leg.odds || 1), 1));
     simAccount.cash -= stake;
     simAccount.bets.push({
@@ -1727,6 +1841,7 @@ function applyLlmBetPlan(plan, options={}){
       status: '待赛',
       agent: 'LLM'
     });
+    existing.add(key);
     placed++;
   }
   recordLlmBetPlan(plan, placed, options.manual);
@@ -1881,24 +1996,40 @@ function renderLedger(){
         ? `${bet.stake} / ${Number(bet.settledProfit || 0) >= 0 ? '+' : ''}${bet.settledProfit || 0}`
         : `${bet.stake} / +${bet.potentialProfit}`;
       const resultText = bet.result ? `<br>赛果 ${escapeHtml(bet.result)}` : bet.legResults ? `<br>${escapeHtml(bet.legResults.map(leg => `${leg.match} ${leg.result}`).join('；'))}` : '';
+      const canSync = !['已中','未中','已取消'].includes(bet.status);
+      const syncButton = canSync ? `<br><button type="button" onclick='syncSimBetsToCalculator(${JSON.stringify(simBetIdentity(bet))})'>载入计算器</button>` : '';
       return `
       <div class="sim-ledger-row">
         <span><b>${escapeHtml(bet.match)}</b><br>${escapeHtml(bet.placedAt)}</span>
         <span>${escapeHtml(bet.pick)} · ${escapeHtml(bet.odds)}<br>${escapeHtml(betPlayLabel(bet))}${bet.agent ? `<br>${escapeHtml(bet.agent)}` : ''}</span>
         <span>${profitText}</span>
-        <span>${escapeHtml(bet.status)}${resultText}${bet.reason ? `<br>${escapeHtml(bet.reason)}` : ''}</span>
+        <span>${escapeHtml(bet.status)}${resultText}${bet.reason ? `<br>${escapeHtml(bet.reason)}` : ''}${syncButton}</span>
       </div>`;
     }).join('')}`;
+}
+function idsForSimBetItem(item){
+  const ids = new Set();
+  if (item?.id !== undefined && item?.id !== null) ids.add(String(item.id));
+  const homeAway = item?.home && item?.away ? {home: item.home, away: item.away} : matchNameParts(item?.match);
+  if (homeAway.home && homeAway.away) {
+    const scheduled = findScheduleMatch(matches, homeAway.home, homeAway.away);
+    if (scheduled) ids.add(String(scheduled.id));
+  }
+  return [...ids];
 }
 function renderSimulation(){
   const visible = active === '全部' ? pendingMatches() : pendingMatches().filter(m => m.d === active);
   let totalStake = 0, totalProfit = 0, count = 0;
-  const activeBets = new Map((simAccount.bets || []).map(bet => [String(bet.id), bet]));
+  const activeBets = new Map();
+  for (const bet of simAccount.bets || []) {
+    if (bet.type === 'parlay') continue;
+    for (const id of idsForSimBetItem(bet)) activeBets.set(id, bet);
+  }
   const parlayByMatch = new Map();
   for (const bet of simAccount.bets || []) {
     if (bet.type !== 'parlay') continue;
     const ids = Array.isArray(bet.legs) && bet.legs.length
-      ? bet.legs.map(leg => String(leg.id))
+      ? bet.legs.flatMap(idsForSimBetItem)
       : String(bet.match || '').match(/tc-\d+/g) || [];
     for (const id of ids) parlayByMatch.set(id, bet);
   }
@@ -1946,7 +2077,7 @@ function renderFilters(){
   el.innerHTML=dates.map(d=>`<button class="${d===active?'active':''}" data-date="${d}">${d}</button>`).join('');
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{active=b.dataset.date; render(); renderFilters();});
 }
-function setActiveView(view){
+function setActiveView(view, options={}){
   const next = ['predictions', 'results', 'sim', 'calculator'].includes(view) ? view : 'predictions';
   activeView = next;
   document.querySelectorAll('[data-view-section]').forEach(section => {
@@ -1964,7 +2095,7 @@ function setActiveView(view){
   }
   if (next === 'results') renderResultsPage();
   if (next === 'calculator') {
-    loadSportteryCalculator({refresh:true, background:calcMatches.length > 0});
+    if (!options.skipRefresh) loadSportteryCalculator({refresh:true, background:calcMatches.length > 0});
     startCalculatorRealtime();
   } else {
     stopCalculatorRealtime();
