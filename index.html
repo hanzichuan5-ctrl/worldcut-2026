@@ -319,6 +319,7 @@
           <div class="sim-db-status" id="simDbStatus"><b>数据库：</b>正在读取统一账户、持仓、历史下注和赛后复盘...</div>
           <div class="sim-actions">
             <button type="button" class="primary" id="autoBetBtn" onclick="llmAutoPlaceBets({manual:true})">立即 LLM 下注</button>
+            <button type="button" onclick="syncSimBetsToCalculator()">同步到计算器</button>
             <button type="button" onclick="toggleLedger()">查看持仓</button>
             <button type="button" onclick="toggleLlmHistory()">LLM 历史</button>
             <button type="button" onclick="settleSimAccount()">结算赛果</button>
@@ -357,9 +358,11 @@
             <div class="calc-control"><label for="calcPassType">过关方式</label><select id="calcPassType"></select></div>
             <div class="calc-actions">
               <button type="button" class="primary" onclick="selectCalculatorPredictions()">按预测选择</button>
+              <button type="button" onclick="addCalculatorSelectionsToSim()">写入模拟盘</button>
               <button type="button" onclick="clearCalculatorSelections()">清空</button>
             </div>
             <div class="calc-actions">
+              <button type="button" onclick="syncSimBetsToCalculator()">同步模拟盘</button>
               <button type="button" onclick="loadSportteryCalculator({manual:true})">刷新官网数据</button>
             </div>
           </div>
@@ -1008,6 +1011,14 @@ function formatCalcMoney(value){
   const n = Number(value || 0);
   return n.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
+function setCalculatorStatus(message){
+  const status = document.getElementById('calcStatus');
+  if (status) status.innerHTML = `<b>数据源：</b>${escapeHtml(message)}`;
+}
+function setSimStatus(message){
+  const source = document.getElementById('oddsSource');
+  if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>${escapeHtml(message)}`;
+}
 function selectedCalculatorLegs(){
   const byKey = new Map(calculatorSourceMatches().map(match => [calculatorMatchKey(match), match]));
   const legs = [];
@@ -1067,6 +1078,180 @@ function calculateSportteryBonus(){
   const profit = maxPayout - stake;
   const breakEven = maxPayout > 0 ? (stake / maxPayout) * 100 : 0;
   return {times, passType, passSize, selectedCount: legs.length, eligibleCount: eligible.length, betCount, stake, minPayout, maxPayout, profit, breakEven};
+}
+function cartesianOdds(legs){
+  const result = [];
+  const walk = (idx, current) => {
+    if (idx >= legs.length) {
+      result.push(current.slice());
+      return;
+    }
+    for (const odd of legs[idx].odds) {
+      current.push({leg: legs[idx], odd});
+      walk(idx + 1, current);
+      current.pop();
+    }
+  };
+  walk(0, []);
+  return result;
+}
+function simLegFromCalculator(entry){
+  const match = entry.leg.match;
+  const odd = entry.odd;
+  return {
+    id: match.id,
+    match: `${match.home} vs ${match.away}`,
+    home: match.home,
+    away: match.away,
+    pick: odd.label,
+    marketCode: match.marketCode || 'HAD',
+    marketName: match.marketName || '胜平负',
+    goalLine: match.goalLine || '',
+    odds: Number(odd.odds.toFixed(2))
+  };
+}
+function calculatorBetKey(parts){
+  return `calc:${parts.join(':')}`;
+}
+function addCalculatorSelectionsToSim(){
+  ensureSimAccount();
+  const calc = calculateSportteryBonus();
+  const legs = selectedCalculatorLegs();
+  if (!legs.length || !calc.betCount) {
+    setCalculatorStatus('请先选择至少一个可计算的结果。');
+    return;
+  }
+  if (calc.betCount > 80) {
+    setCalculatorStatus(`当前会生成 ${calc.betCount} 张模拟单，数量太多；请减少选择或降低过关组合。`);
+    return;
+  }
+  if (calc.stake > Number(simAccount.cash || 0)) {
+    setCalculatorStatus(`模拟盘可用资金不足：需要 ${formatCalcMoney(calc.stake)}，当前可用 ${formatCalcMoney(simAccount.cash)}。`);
+    return;
+  }
+  const existing = new Set((simAccount.bets || []).map(bet => bet.key));
+  const nowText = new Date().toLocaleString('zh-CN', {hour12: false});
+  let placed = 0;
+  let requiredStake = 0;
+  const newBets = [];
+  if (calc.passType === 'single') {
+    for (const leg of legs.filter(item => item.supportsSingle)) {
+      for (const odd of leg.odds) {
+        const key = calculatorBetKey(['single', leg.key, odd.label, calc.times]);
+        if (existing.has(key)) continue;
+        const stake = 2 * calc.times;
+        requiredStake += stake;
+        newBets.push({
+          key,
+          id: leg.match.id,
+          match: `${leg.match.home} vs ${leg.match.away}`,
+          pick: odd.label,
+          marketCode: leg.match.marketCode || 'HAD',
+          marketName: leg.match.marketName || '胜平负',
+          goalLine: leg.match.goalLine || '',
+          odds: Number(odd.odds.toFixed(2)),
+          stake,
+          potentialProfit: Math.round(stake * (odd.odds - 1)),
+          reason: `体彩计算器写入：${marketLabel(leg.match)} 单关，${calc.times} 倍。`,
+          placedAt: nowText,
+          status: '待赛',
+          agent: '体彩计算器'
+        });
+      }
+    }
+  } else {
+    const eligible = legs.filter(leg => leg.supportsAllUp);
+    const combos = calcCombinations(eligible, calc.passSize);
+    for (const combo of combos) {
+      for (const pickCombo of cartesianOdds(combo)) {
+        const legsForBet = pickCombo.map(simLegFromCalculator);
+        const combinedOdds = legsForBet.reduce((acc, leg) => acc * Number(leg.odds || 1), 1);
+        const key = calculatorBetKey([calc.passType, calc.times, ...legsForBet.map(leg => `${leg.id}-${leg.pick}`)]);
+        if (existing.has(key)) continue;
+        const stake = 2 * calc.times;
+        requiredStake += stake;
+        newBets.push({
+          key,
+          id: key,
+          type: 'parlay',
+          match: legsForBet.map(leg => `${leg.match} ${leg.pick}`).join(' × '),
+          legs: legsForBet,
+          pick: `${calc.passSize}串1`,
+          odds: Number(combinedOdds.toFixed(2)),
+          stake,
+          potentialProfit: Math.round(stake * (combinedOdds - 1)),
+          reason: `体彩计算器写入：${calc.passSize}串1，${calc.times} 倍。`,
+          placedAt: nowText,
+          status: '待赛',
+          agent: '体彩计算器'
+        });
+      }
+    }
+  }
+  if (!newBets.length) {
+    setCalculatorStatus('这些选项已经在模拟盘里了，没有新增模拟单。');
+    return;
+  }
+  if (requiredStake > Number(simAccount.cash || 0)) {
+    setCalculatorStatus(`扣除重复单后仍需 ${formatCalcMoney(requiredStake)}，模拟盘可用资金不足。`);
+    return;
+  }
+  simAccount.cash = Number(simAccount.cash || 0) - requiredStake;
+  simAccount.bets.push(...newBets);
+  placed = newBets.length;
+  simStats = calculateLocalStats();
+  saveSimAccount();
+  renderSimulation();
+  document.getElementById('simLedger')?.classList.add('show');
+  setSimStatus(`已从体彩计算器写入 ${placed} 张模拟单，占用 ${formatCalcMoney(requiredStake)}。`);
+  setActiveView('sim');
+}
+function pickIndexFromLabel(pick){
+  if (pick === '主胜') return 0;
+  if (pick === '平局') return 1;
+  if (pick === '客胜') return 2;
+  return -1;
+}
+function matchNameParts(text){
+  const parts = String(text || '').split(/\s+vs\s+/i);
+  return parts.length === 2 ? {home: parts[0].trim(), away: parts[1].trim()} : {home: '', away: ''};
+}
+function findCalculatorMatchForBet(bet){
+  const source = calculatorSourceMatches();
+  const homeAway = bet.home && bet.away ? {home: bet.home, away: bet.away} : matchNameParts(bet.match);
+  if (!homeAway.home || !homeAway.away) return null;
+  return source.find(match => {
+    const h = normalizeTeamName(homeAway.home);
+    const a = normalizeTeamName(homeAway.away);
+    const mh = normalizeTeamName(match.home);
+    const ma = normalizeTeamName(match.away);
+    const sameTeams = (h.includes(mh) || mh.includes(h)) && (a.includes(ma) || ma.includes(a));
+    const sameMarket = String(match.marketCode || 'HAD') === String(bet.marketCode || 'HAD');
+    const sameLine = String(match.goalLine || '') === String(bet.goalLine || '');
+    return sameTeams && sameMarket && sameLine;
+  });
+}
+async function syncSimBetsToCalculator(){
+  if (!calcMatches.length) await loadSportteryCalculator();
+  const pending = (simAccount.bets || []).filter(bet => !['已中', '未中', '已取消'].includes(bet.status));
+  calcSelections.clear();
+  let synced = 0;
+  for (const bet of pending) {
+    const entries = bet.type === 'parlay' && Array.isArray(bet.legs) ? bet.legs : [bet];
+    for (const entry of entries) {
+      const match = findCalculatorMatchForBet(entry);
+      const idx = pickIndexFromLabel(entry.pick);
+      if (!match || idx < 0) continue;
+      const key = calculatorMatchKey(match);
+      const current = new Set(calculatorSelectionsFor(key));
+      current.add(idx);
+      calcSelections.set(key, [...current].sort((a, b) => a - b));
+      synced++;
+    }
+  }
+  setActiveView('calculator');
+  renderCalculator();
+  setCalculatorStatus(synced ? `已从模拟盘同步 ${synced} 个待赛选择。` : '模拟盘暂无可同步到当前体彩计算器的待赛选择。');
 }
 function renderCalculatorSummary(calc){
   const el = document.getElementById('calcSummary');
