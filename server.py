@@ -40,7 +40,7 @@ SPORTTERY_OFFICIAL_URL = "https://webapi.sporttery.cn/gateway/uniform/football/g
 SPORTTERY_CALCULATOR_URL = "https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=hhad,had"
 SPORTTERY_HTTP_PROXY = os.getenv("SPORTTERY_HTTP_PROXY", "http://127.0.0.1:7890").strip()
 CACHE_TTL_SECONDS = 600
-PROMPT_VERSION = "casual-v2"
+PROMPT_VERSION = "casual-v3"
 PREDICTION_CACHE: dict[str, dict] = {}
 DATA_CACHE: dict[str, dict] = {}
 RATE_LIMITS: dict[str, list[float]] = {}
@@ -139,6 +139,7 @@ RULES = """worldcup-2026-predictor skill 分析流程：
 - 基本面轨道50%：球队实力层级25%，球队/球员状态15%，赛程场地与晋级动机10%。
 - 市场/舆情轨道35%：赔率与盘口方向20%，新闻导向10%，公众热度/异常信号5%。
 - 裁判与比赛控制15%：裁判执法严谨度、牌点倾向、犯规尺度、VAR/点球风险。
+- 如果在线情报里存在 sporttery_calculator_snapshot，必须把其中的胜平负/让球胜平负固定奖金、让球数、单关/串关支持、赔率更新时间作为市场/投注轨道依据；它不是赛果事实。
 
 双轨背离预测：
 - 基本面轨道和市场/舆情轨道同向：提高置信度。
@@ -1770,6 +1771,65 @@ def sporttery_tool(home_cn: str, away_cn: str) -> list[dict]:
     }]
 
 
+def sporttery_item_matches_teams(item: dict, home_cn: str, away_cn: str) -> bool:
+    home_key = normalize_team_text(home_cn)
+    away_key = normalize_team_text(away_cn)
+    item_home = normalize_team_text(item.get("home", ""))
+    item_away = normalize_team_text(item.get("away", ""))
+    if item_home == home_key and item_away == away_key:
+        return True
+    item_text = normalize_team_text(f"{item.get('home', '')}{item.get('away', '')}")
+    return bool(home_key and away_key and home_key in item_text and away_key in item_text)
+
+
+def compact_sporttery_calculator_item(item: dict) -> dict:
+    decimal = item.get("decimal") or []
+    return {
+        "match_id": item.get("match_id"),
+        "match_no": item.get("match_no"),
+        "home": item.get("home"),
+        "away": item.get("away"),
+        "league": item.get("league"),
+        "match_time": item.get("match_time"),
+        "market_code": item.get("market_code"),
+        "market_name": item.get("market_name"),
+        "goal_line": item.get("goal_line"),
+        "pool_status": item.get("pool_status"),
+        "supports_single": item.get("supports_single"),
+        "supports_all_up": item.get("supports_all_up"),
+        "decimal": decimal,
+        "implied_probabilities": probs_from_decimal(decimal),
+        "update_time": item.get("update_time"),
+        "source": item.get("source"),
+    }
+
+
+def sporttery_calculator_tool(home_cn: str, away_cn: str) -> list[dict]:
+    snapshot = sporttery_calculator_snapshot(force_refresh=True)
+    items = [
+        compact_sporttery_calculator_item(item)
+        for item in snapshot.get("matches", [])
+        if sporttery_item_matches_teams(item, home_cn, away_cn)
+    ]
+    return [{
+        "type": "sporttery_calculator_snapshot",
+        "source": "中国体育彩票竞彩网足球胜平负计算器",
+        "status": snapshot.get("status"),
+        "source_url": snapshot.get("source_url"),
+        "official_page": snapshot.get("official_page"),
+        "official_url": snapshot.get("official_url"),
+        "official_last_update": snapshot.get("official_last_update"),
+        "generated_at": snapshot.get("generated_at"),
+        "cache_age_seconds": snapshot.get("cache_age_seconds"),
+        "note": "这是官方移动端足球胜平负计算器数据。用于判断市场方向、固定奖金和投注可用性；不是赛果事实。",
+        "items": items[:4],
+        "matched_count": len(items),
+        "raw_count": snapshot.get("raw_count"),
+        "filtered_finished_count": snapshot.get("filtered_finished_count"),
+        "error": snapshot.get("error") or snapshot.get("cache_error"),
+    }]
+
+
 def free_search(query: str, limit: int = 3) -> list[dict]:
     """Use DuckDuckGo (free, no key needed) to search the web."""
     if not HAS_DDGS:
@@ -2096,6 +2156,7 @@ def collect_match_intelligence(match: dict) -> list[dict]:
     collected.extend(api_football_tool(home, away))
     collected.extend(odds_api_tool(home, away))
     collected.extend(sporttery_tool(home_cn, away_cn))
+    collected.extend(sporttery_calculator_tool(home_cn, away_cn))
     queries = [
         f"{home} {away} 2026 World Cup fixture group standings result",
         f"{home} national team official squad injuries 2026 World Cup",
@@ -2495,10 +2556,17 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             "page_pick": match.get("api"),
             "confidence": match.get("conf"),
             "source": match.get("oddsSource"),
+            "market_code": match.get("marketCode"),
+            "market_name": match.get("marketName"),
+            "goal_line": match.get("goalLine"),
+            "supports_single": match.get("supportsSingle"),
+            "supports_all_up": match.get("supportsAllUp"),
+            "pool_status": match.get("poolStatus"),
+            "odds_update_time": match.get("oddsUpdateTime"),
         })
     prompt = f"""你是 2026 世界杯模拟盘自动下注代理。
 
-目标：基于 worldcup-2026-predictor skill 的思路，结合体彩固定奖金、页面概率、球队实力推断、新闻/裁判/阵容缺失风险，给出模拟下注计划。这里是研究型模拟盘，不是真实资金，不要因为信息不完整就全部跳过。
+目标：基于 worldcup-2026-predictor skill 的思路，结合体彩计算器固定奖金、页面概率、球队实力推断、新闻/裁判/阵容缺失风险，给出模拟下注计划。这里是研究型模拟盘，不是真实资金，不要因为信息不完整就全部跳过。
 
 硬性限制：
 - 这是模拟盘，不是真实下注。
@@ -2509,6 +2577,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 - 串关最多3场，不能包含 betting_allowed=false 的比赛。
 - 单场下注不能超过可用资金的 {max_stake_pct}%。
 - 体彩固定奖金天然含水位，页面概率多为盘口隐含概率归一化；不要机械要求每场都有严格数学正期望。
+- 如果比赛列表包含 market_code、goal_line、supports_single、supports_all_up、odds_update_time，必须用于判断投注模式和盘口方向。
 - 优先选择 3-6 场强信号小仓试单，除非整批比赛确实没有任何清晰倾向。
 - 强信号定义：热门方胜率/实力层级明显、赔率没有严重过热、或弱势方向有清晰背离价值。
 - 信息缺失时降低仓位，不要直接跳过所有比赛。
@@ -2890,7 +2959,9 @@ def call_openai(api_key: str, match: dict, intelligence: list[dict]) -> str:
 def run_auto_worker_once() -> dict:
     account_id = AUTO_WORKER_ACCOUNT_ID
     state = get_sim_state(account_id)
-    snapshot = sporttery_odds_snapshot()
+    snapshot = sporttery_calculator_snapshot(force_refresh=True)
+    if snapshot.get("status") != "ok":
+        snapshot = sporttery_odds_snapshot()
     matches = sporttery_snapshot_to_matches(snapshot) if snapshot.get("status") == "ok" else []
     signature = odds_signature(matches) if matches else ""
     settle_result = settle_sim_account(account_id)
@@ -2935,6 +3006,7 @@ def run_auto_worker_once() -> dict:
     result = {
         "time": beijing_time(),
         "odds_status": snapshot.get("status"),
+        "odds_source": snapshot.get("source"),
         "odds_count": len(matches),
         "settled": settle_result.get("settled", 0),
         "reviews_added": settle_result.get("reviews_added", 0),
@@ -2951,6 +3023,7 @@ def run_auto_worker_once() -> dict:
             **(state_after.get("worker") if isinstance(state_after.get("worker"), dict) else {}),
             "last_run_at": result["time"],
             "last_odds_status": result["odds_status"],
+            "last_odds_source": result["odds_source"],
             "last_odds_count": result["odds_count"],
             "last_settled": result["settled"],
             "last_reviews_added": result["reviews_added"],
