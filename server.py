@@ -1380,7 +1380,7 @@ def worldcup_forecast_from_market(home: str, away: str, decimal_odds: list[float
     top_scores = (direction_scores or scores)[:5]
     return {
         "type": "worldcup_forecast_poisson",
-        "source": "playmobil/worldcup-forecast MIT; adapted Poisson grid + temperature/draw calibration",
+        "source": "odds_calibrated_poisson",
         "method": "体彩固定奖金去水后，用 Poisson 比分网格拟合 1X2 概率，并套用 temperature=1.08 与 draw_boost=0.03 的校准层。",
         "home": home,
         "away": away,
@@ -1501,18 +1501,8 @@ def cn_datetime(date_text: str) -> str:
 def sporttery_item_to_match(item: dict, idx: int) -> dict:
     decimal = item.get("decimal") or []
     forecast = worldcup_forecast_from_market(item.get("home", ""), item.get("away", ""), decimal)
-    probs = [round(float(value)) for value in (forecast.get("probabilities") or [])]
-    if len(probs) != 3:
-        probs = probs_from_decimal(decimal)
-    api_pick = forecast.get("pick") or ""
-    if api_pick == "主胜":
-        pick = item.get("home", "")
-    elif api_pick == "客胜":
-        pick = item.get("away", "")
-    elif api_pick == "平局":
-        pick = "平局"
-    else:
-        pick, api_pick = pick_from_probs(item.get("home", ""), item.get("away", ""), probs)
+    probs = probs_from_decimal(decimal)
+    pick, api_pick = pick_from_probs(item.get("home", ""), item.get("away", ""), probs)
     market_code = str(item.get("market_code") or "HAD").upper()
     goal_line = str(item.get("goal_line") or "").strip()
     market_name = "让球胜平负" if market_code == "HHAD" else "胜平负"
@@ -1534,11 +1524,11 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "goalLine": goal_line,
         "pick": pick,
         "api": api_pick,
-        "score": forecast.get("score") or score_from_market(api_pick, probs),
+        "score": score_from_market(api_pick, probs),
         "conf": conf_from_prob(max(probs)),
         "probs": probs,
         "forecast": forecast,
-        "why": f"以中国体育彩票竞彩网当前{market_name}{market_suffix}固定奖金为主数据源，并融合 playmobil/worldcup-forecast 的 Poisson 比分网格、温度校准和平局提升。结构模型给出 {api_pick}，推荐比分 {forecast.get('score') or '-'}；仍需结合阵容、伤病、裁判和临场新闻复核。",
+        "why": f"以中国体育彩票竞彩网当前{market_name}{market_suffix}固定奖金为主数据源，主预测仍按体彩隐含概率和平局触发规则生成；结构模型仅作参考，给出 {forecast.get('pick') or '-'}，参考比分 {forecast.get('score') or '-'}。仍需结合阵容、伤病、裁判和临场新闻复核。",
     }
 
 
@@ -2070,10 +2060,10 @@ def collect_match_intelligence(match: dict) -> list[dict]:
         draw_assessment_from_probs(match.get("probs") or [], match.get("conf") or ""),
         {
             "type": "worldcup_forecast_poisson",
-            "title": "playmobil/worldcup-forecast inspired Poisson calibration",
-            "source": "https://github.com/playmobil/worldcup-forecast",
+            "title": "odds-calibrated Poisson structural model",
+            "source": "internal",
             "forecast": forecast,
-            "note": "融合其 Poisson 1X2、temperature calibration 和 neutral draw boost 思路；线上版本以体彩固定奖金去水概率作为输入，不引入 PyMC 训练依赖。",
+            "note": "使用 Poisson 1X2、temperature calibration 和平局提升；线上版本以体彩固定奖金去水概率作为输入，不引入训练框架依赖。",
         },
         {
             "type": "official_source",

@@ -330,8 +330,8 @@
       <div class="grid" id="cards"></div>
       <section class="sources">
         <h2>来源与方法</h2>
-        <p>赛程、场地、转播时间与盘口线参考 ESPN 的世界杯赛程页面；赛程官方来源参考 FIFA 官方赛程/结果页面；球队实力层级参考 FIFA 男足世界排名页面。结构模型融合 playmobil/worldcup-forecast 的 Poisson 比分网格、温度校准和平局提升思路，线上版本不引入 PyMC 训练依赖，而是用体彩固定奖金去水概率作为输入。页面采用静态快照，生成时间为 2026-06-10。</p>
-        <p><a href="https://www.espn.com/soccer/schedule/_/league/fifa.world">ESPN 世界杯赛程</a> · <a href="https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles/match-schedule-fixtures-results-teams-stadiums">FIFA 官方赛程</a> · <a href="https://inside.fifa.com/fifa-world-ranking/men">FIFA 男足世界排名</a> · <a href="https://github.com/playmobil/worldcup-forecast">playmobil/worldcup-forecast</a></p>
+        <p>赛程、场地、转播时间与盘口线参考 ESPN 的世界杯赛程页面；赛程官方来源参考 FIFA 官方赛程/结果页面；球队实力层级参考 FIFA 男足世界排名页面。结构模型采用 Poisson 比分网格、温度校准和平局提升，线上版本以体彩固定奖金去水概率作为输入。页面采用静态快照，生成时间为 2026-06-10。</p>
+        <p><a href="https://www.espn.com/soccer/schedule/_/league/fifa.world">ESPN 世界杯赛程</a> · <a href="https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles/match-schedule-fixtures-results-teams-stadiums">FIFA 官方赛程</a> · <a href="https://inside.fifa.com/fifa-world-ranking/men">FIFA 男足世界排名</a></p>
       </section>
     </div>
   </main>
@@ -587,16 +587,8 @@ function refreshDateFilters(){
 function sportteryToMatch(item, idx){
   const decimal = item.decimal || [];
   const forecast = item.forecast || null;
-  const probs = Array.isArray(forecast?.probabilities) && forecast.probabilities.length >= 3
-    ? forecast.probabilities.slice(0, 3).map(v => Math.round(Number(v) || 0))
-    : probsFromDecimal(decimal);
-  const pick = forecast?.pick === '主胜'
-    ? {pick: item.home, api: '主胜'}
-    : forecast?.pick === '客胜'
-      ? {pick: item.away, api: '客胜'}
-      : forecast?.pick === '平局'
-        ? {pick: '平局', api: '平局'}
-        : pickFromProbs(item.home, item.away, probs);
+  const probs = probsFromDecimal(decimal);
+  const pick = pickFromProbs(item.home, item.away, probs);
   const marketCode = String(item.market_code || item.marketCode || 'HAD').toUpperCase();
   const goalLine = String(item.goal_line || item.goalLine || '').trim();
   const marketName = marketCode === 'HHAD' ? '让球胜平负' : '胜平负';
@@ -618,12 +610,12 @@ function sportteryToMatch(item, idx){
     goalLine,
     pick: pick.pick,
     api: pick.api,
-    score: forecast?.score || scoreFromMarket(pick.api, probs),
+    score: scoreFromMarket(pick.api, probs),
     conf: confFromProb(Math.max(...probs)),
     probs,
     forecast,
     why: forecast
-      ? `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源，并融合 playmobil/worldcup-forecast 的 Poisson 比分网格、温度校准和平局提升。结构模型给出 ${pick.api}，推荐比分 ${forecast.score || '-'}；仍需结合阵容、伤病、裁判和临场新闻复核。`
+      ? `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源，主预测仍按体彩隐含概率和平局触发规则生成；结构模型仅作参考，给出 ${forecast.pick || '-'}，参考比分 ${forecast.score || '-'}。仍需结合阵容、伤病、裁判和临场新闻复核。`
       : `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
   };
 }
@@ -697,7 +689,7 @@ function renderForecastInsight(match){
   const chips = scores.map(item => `<span class="score-chip">${escapeHtml(item.score)} · ${escapeHtml(item.probability)}%</span>`).join('');
   return `
     <div class="forecast-box">
-      <div class="forecast-head"><b>Worldcup-Forecast 校准</b><span>Poisson 比分网格 · 温度校准 · 平局提升</span></div>
+      <div class="forecast-head"><b>结构模型参考</b><span>Poisson 比分网格 · 温度校准 · 平局提升</span></div>
       <div class="forecast-grid">
         <div class="forecast-metric"><span>结构方向</span><b>${escapeHtml(forecast.pick || match.api || '-')} · ${escapeHtml(forecast.score || match.score || '-')}</b></div>
         <div class="forecast-metric"><span>校准概率</span><b>${labels.map((label, idx) => `${label} ${Number(probs[idx] || 0).toFixed(1)}%`).join(' / ')}</b></div>
