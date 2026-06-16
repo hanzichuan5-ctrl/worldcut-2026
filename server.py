@@ -37,6 +37,7 @@ THESPORTSDB_BASE_URL = os.getenv("THESPORTSDB_BASE_URL", "https://www.thesportsd
 SPORTTERY_PROXY_URL = os.getenv("SPORTTERY_PROXY_URL", "").strip()
 SPORTTERY_PROXY_URLS = [item.strip() for item in os.getenv("SPORTTERY_PROXY_URLS", "").split(",") if item.strip()]
 SPORTTERY_OFFICIAL_URL = "https://webapi.sporttery.cn/gateway/uniform/football/getMatchListV1.qry?clientCode=3001"
+SPORTTERY_CALCULATOR_URL = "https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=hhad,had"
 SPORTTERY_HTTP_PROXY = os.getenv("SPORTTERY_HTTP_PROXY", "http://127.0.0.1:7890").strip()
 CACHE_TTL_SECONDS = 600
 PROMPT_VERSION = "casual-v2"
@@ -47,6 +48,7 @@ RATE_LIMIT_LOCK = threading.Lock()
 SIM_STATE_LOCK = threading.Lock()
 SNAPSHOT_CACHE = {
     "odds": {"payload": None, "ts": 0.0, "error": ""},
+    "calculator": {"payload": None, "ts": 0.0, "error": ""},
     "results": {"payload": None, "ts": 0.0, "error": ""},
 }
 SNAPSHOT_LOCK = threading.Lock()
@@ -1374,6 +1376,7 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "d": cn_date(item.get("match_time")),
         "time": cn_datetime(item.get("match_time")),
         "matchNo": item.get("match_no") or "",
+        "matchId": item.get("match_id") or "",
         "home": item.get("home"),
         "away": item.get("away"),
         "venue": f"{item.get('league') or '世界杯'} · 中国体育彩票",
@@ -1383,6 +1386,11 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "marketCode": market_code,
         "marketName": market_name,
         "goalLine": goal_line,
+        "supportsSingle": item.get("supports_single", True),
+        "supportsAllUp": item.get("supports_all_up", True),
+        "poolStatus": item.get("pool_status") or "",
+        "businessDate": item.get("business_date") or "",
+        "oddsUpdateTime": item.get("update_time") or "",
         "pick": pick,
         "api": api_pick,
         "score": score_from_market(api_pick, probs),
@@ -1440,6 +1448,27 @@ def choose_sporttery_pool(row: dict) -> tuple[dict, str, str]:
     return {}, "", ""
 
 
+def sporttery_pool_meta(row: dict, market_code: str) -> dict:
+    pool_list = row.get("poolList")
+    if not isinstance(pool_list, list):
+        return {}
+    wanted = str(market_code or "").upper()
+    for item in pool_list:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("poolCode") or "").upper() == wanted:
+            return item
+    return {}
+
+
+def sporttery_bool(value, default: bool = True) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "n"}
+    return bool(value)
+
+
 def parse_sporttery_matches(data: dict) -> list[dict]:
     matches = []
     for row in walk_json(data):
@@ -1453,13 +1482,17 @@ def parse_sporttery_matches(data: dict) -> list[dict]:
         lose = normalize_sporttery_decimal(sporttery_pick(had, ("a", "away", "lose", "had_a", "a_sp", "c")))
         if not all([win, draw, lose]):
             continue
+        pool_meta = sporttery_pool_meta(row, market_code or "HAD")
         matches.append({
+            "match_id": sporttery_pick(row, ("matchId", "id")),
             "home": str(home),
             "away": str(away),
             "league": sporttery_pick(row, ("leagueName", "leagueAbbName", "leagueAllName", "league", "l_cn")),
             "match_no": sporttery_pick(row, ("matchNumStr", "matchNum", "matchNo", "num", "issueNum")),
             "match_date": sporttery_pick(row, ("matchDate", "businessDate", "date")),
             "match_clock": sporttery_pick(row, ("matchTime", "time")),
+            "business_date": sporttery_pick(row, ("businessDate", "matchDate", "date")),
+            "match_status": sporttery_pick(row, ("matchStatus", "status")),
             "match_time": " ".join(str(part) for part in (
                 sporttery_pick(row, ("matchDate", "businessDate", "date")),
                 sporttery_pick(row, ("matchTime", "time")),
@@ -1467,6 +1500,13 @@ def parse_sporttery_matches(data: dict) -> list[dict]:
             "market_code": market_code or "HAD",
             "market_name": "让球胜平负" if market_code == "HHAD" else "胜平负",
             "goal_line": goal_line,
+            "pool_status": pool_meta.get("poolStatus") or sporttery_pick(had, ("poolStatus", "status")),
+            "supports_single": sporttery_bool(pool_meta.get("bettingSingle", pool_meta.get("single", 1))),
+            "supports_all_up": sporttery_bool(pool_meta.get("bettingAllup", pool_meta.get("allUp", 1))),
+            "update_time": " ".join(str(part) for part in (
+                sporttery_pick(had, ("updateDate",)),
+                sporttery_pick(had, ("updateTime",)),
+            ) if part),
             "decimal": [win, draw, lose],
             "american": [decimal_to_american(win), decimal_to_american(draw), decimal_to_american(lose)],
             "source": "中国体育彩票竞彩网固定奖金",
@@ -1481,6 +1521,18 @@ def build_sporttery_urls() -> list[str]:
             continue
         if "{url}" in raw_url:
             raw_url = raw_url.replace("{url}", parse.quote(SPORTTERY_OFFICIAL_URL, safe=""))
+        if raw_url not in urls:
+            urls.append(raw_url)
+    return urls
+
+
+def build_sporttery_calculator_urls() -> list[str]:
+    urls = []
+    for raw_url in [SPORTTERY_PROXY_URL, *SPORTTERY_PROXY_URLS, SPORTTERY_CALCULATOR_URL]:
+        if not raw_url:
+            continue
+        if "{url}" in raw_url:
+            raw_url = raw_url.replace("{url}", parse.quote(SPORTTERY_CALCULATOR_URL, safe=""))
         if raw_url not in urls:
             urls.append(raw_url)
     return urls
@@ -1504,6 +1556,27 @@ def sporttery_fetch_payload() -> tuple[dict | None, str, str]:
         except Exception as exc:
             errors.append(f"{url}: {str(exc)[:180]}")
     source_url = build_sporttery_urls()[0] if build_sporttery_urls() else SPORTTERY_OFFICIAL_URL
+    return None, source_url, " | ".join(errors)
+
+
+def sporttery_calculator_fetch_payload() -> tuple[dict | None, str, str]:
+    errors = []
+    for url in build_sporttery_calculator_urls():
+        try:
+            use_proxy = bool(SPORTTERY_HTTP_PROXY) and url == SPORTTERY_CALCULATOR_URL
+            data = fetch_json_request_cached(url, headers={
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+                "Referer": "https://m.sporttery.cn/mjc/jsq/zqspf/",
+                "Origin": "https://m.sporttery.cn",
+                "Accept": "application/json,text/plain,*/*",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+            }, ttl_seconds=60, timeout_seconds=8, proxy_url=SPORTTERY_HTTP_PROXY if use_proxy else "")
+            return unwrap_proxy_json(data), url, ""
+        except Exception as exc:
+            errors.append(f"{url}: {str(exc)[:180]}")
+    source_url = build_sporttery_calculator_urls()[0] if build_sporttery_calculator_urls() else SPORTTERY_CALCULATOR_URL
     return None, source_url, " | ".join(errors)
 
 
@@ -1545,6 +1618,44 @@ def _build_sporttery_odds_snapshot() -> dict:
         "filtered_finished_count": finished_count,
         "generated_at": beijing_time(),
         "official_url": SPORTTERY_OFFICIAL_URL,
+    }
+
+
+def _build_sporttery_calculator_snapshot() -> dict:
+    data, url, err = sporttery_calculator_fetch_payload()
+    if data is None:
+        return {
+            "source": "中国体育彩票竞彩网足球胜平负计算器",
+            "source_url": url,
+            "status": "blocked_or_unavailable",
+            "note": "已接入官方足球胜平负计算器接口，但当前服务器访问被站点安全策略拦截或网络不可用。",
+            "error": err[:300],
+            "matches": [],
+            "generated_at": beijing_time(),
+            "official_page": "https://m.sporttery.cn/mjc/jsq/zqspf/",
+            "official_url": SPORTTERY_CALCULATOR_URL,
+        }
+    parsed_matches = parse_sporttery_matches(data)
+    finished_results = fetch_worldcup_results()
+    matches = []
+    finished_count = 0
+    for item in parsed_matches:
+        finished = match_result_for_teams(item.get("home", ""), item.get("away", ""), finished_results)
+        if finished:
+            finished_count += 1
+            continue
+        matches.append(item)
+    return {
+        "source": "中国体育彩票竞彩网足球胜平负计算器",
+        "source_url": url,
+        "status": "ok" if matches else "no_matches_parsed",
+        "note": "数据采集自官方移动端足球胜平负计算器接口，固定奖金为十进制赔率。",
+        "matches": matches[:200],
+        "raw_count": len(parsed_matches),
+        "filtered_finished_count": finished_count,
+        "generated_at": beijing_time(),
+        "official_page": "https://m.sporttery.cn/mjc/jsq/zqspf/",
+        "official_url": SPORTTERY_CALCULATOR_URL,
     }
 
 
@@ -1595,6 +1706,10 @@ def refresh_snapshot(name: str, builder) -> None:
 
 def sporttery_odds_snapshot() -> dict:
     return cached_snapshot("odds", _build_sporttery_odds_snapshot, ODDS_REFRESH_SECONDS * 2)
+
+
+def sporttery_calculator_snapshot() -> dict:
+    return cached_snapshot("calculator", _build_sporttery_calculator_snapshot, ODDS_REFRESH_SECONDS * 2)
 
 
 def sporttery_tool(home_cn: str, away_cn: str) -> list[dict]:
@@ -2085,6 +2200,9 @@ class Handler(SimpleHTTPRequestHandler):
         parsed = parse.urlparse(self.path)
         if parsed.path == "/api/odds":
             json_response(self, 200, sporttery_odds_snapshot())
+            return
+        if parsed.path == "/api/sporttery-calculator":
+            json_response(self, 200, sporttery_calculator_snapshot())
             return
         if parsed.path == "/api/history":
             params = parse.parse_qs(parsed.query)
