@@ -406,7 +406,7 @@ def get_history(match_id: str | None = None, limit: int = 50) -> list[dict]:
             item["sources"] = json.loads(item.pop("sources_json") or "[]")[:5]
         except json.JSONDecodeError:
             item["sources"] = []
-        item["predicted_score"] = extract_predicted_score(analysis) or item.get("static_score", "")
+        item["predicted_score"] = normalize_score_text(extract_predicted_score(analysis) or item.get("static_score", ""))
         item["predicted_pick"] = pick_from_score(item["predicted_score"]) or extract_predicted_pick(f"{analysis} {item.get('summary', '')}")
         result.append(item)
     return result
@@ -429,7 +429,7 @@ def get_prediction_matches(limit: int = 5000) -> list[dict]:
     for row in rows:
         item = dict(row)
         analysis = item.pop("analysis", "") or ""
-        item["predicted_score"] = extract_predicted_score(analysis) or item.get("static_score", "")
+        item["predicted_score"] = normalize_score_text(extract_predicted_score(analysis) or item.get("static_score", ""))
         item["predicted_pick"] = pick_from_score(item["predicted_score"]) or extract_predicted_pick(f"{analysis} {item.get('summary', '')}")
         result.append(item)
     return result
@@ -1143,7 +1143,7 @@ def normalize_score_text(value: str) -> str:
     match = re.search(r"(\d{1,2})\s*[-‐‑‒–—]\s*(\d{1,2})", text)
     if match:
         return f"{int(match.group(1))}-{int(match.group(2))}"
-    return text.strip()
+    return ""
 
 
 def pick_from_score(value: str) -> str:
