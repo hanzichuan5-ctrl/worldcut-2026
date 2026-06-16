@@ -151,14 +151,22 @@
     .calc-ticket-panel.show { display: block; }
     .calc-ticket-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 10px 12px; background: #fbf8ef; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.45; }
     .calc-ticket-head b { display: block; color: var(--ink); font-size: 14px; }
-    .calc-ticket-list { display: grid; gap: 0; }
-    .calc-ticket { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
-    .calc-ticket:first-child { border-top: 0; }
-    .calc-ticket-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
-    .calc-ticket-meta b { color: var(--ink); font-size: 14px; }
-    .calc-ticket-legs { display: grid; gap: 6px; }
-    .calc-ticket-leg { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fffaf0; color: var(--muted); font-size: 12px; line-height: 1.35; }
-    .calc-ticket-leg b { color: var(--ink); font-size: 13px; }
+    .calc-ticket-list { display: grid; gap: 12px; padding: 12px; background: #f3efe4; }
+    .calc-ticket { display: grid; gap: 8px; max-width: 460px; background: #fffdf4; border: 1px dashed #b6a36d; border-radius: 4px; padding: 12px; color: #24210f; box-shadow: 0 6px 14px rgba(62,48,18,.08); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .calc-ticket-top { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; border-bottom: 1px dashed #c9b982; padding-bottom: 8px; }
+    .calc-ticket-brand span { display: block; color: #b62424; font-size: 13px; font-weight: 900; }
+    .calc-ticket-brand b { display: block; color: #24210f; font-size: 18px; margin-top: 2px; }
+    .calc-ticket-stamp { border: 1px solid #b62424; color: #b62424; border-radius: 4px; padding: 3px 6px; font-size: 12px; font-weight: 900; }
+    .calc-ticket-code { color: #6e6540; font-size: 12px; line-height: 1.45; border-bottom: 1px dashed #d7c895; padding-bottom: 7px; }
+    .calc-ticket-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+    .calc-ticket-meta span { display: grid; gap: 2px; padding: 6px; background: #fbf4d9; border: 1px solid #e0d29c; border-radius: 4px; color: #6e6540; font-size: 11px; line-height: 1.25; }
+    .calc-ticket-meta b { color: #24210f; font-size: 13px; }
+    .calc-ticket-legs { display: grid; gap: 6px; border-top: 1px dashed #d7c895; border-bottom: 1px dashed #d7c895; padding: 8px 0; }
+    .calc-ticket-leg { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; color: #5f5738; font-size: 12px; line-height: 1.35; }
+    .calc-ticket-leg b { color: #24210f; font-size: 13px; }
+    .calc-ticket-leg strong { color: #b62424; font-size: 13px; }
+    .calc-ticket-barcode { height: 34px; border-radius: 2px; background: repeating-linear-gradient(90deg, #211f16 0 2px, transparent 2px 5px, #211f16 5px 6px, transparent 6px 9px, #211f16 9px 12px, transparent 12px 15px); opacity: .84; }
+    .calc-ticket-note { color: #8a7d50; font-size: 11px; line-height: 1.45; text-align: center; }
     .calc-ticket-empty { padding: 14px 12px; color: var(--muted); font-size: 13px; line-height: 1.5; }
     .calc-list { display: grid; gap: 8px; margin-top: 10px; }
     .calc-match { display: grid; gap: 8px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
@@ -167,7 +175,8 @@
     .calc-include.active { background: #e9f6ef; color: var(--green); border-color: rgba(19,121,91,.35); }
     .calc-match-title b { display: block; color: var(--ink); }
     .calc-match-title span { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
-    .calc-market { display: grid; grid-template-columns: auto .85fr 1.2fr auto; gap: 8px; align-items: center; padding-top: 8px; border-top: 1px solid var(--line); }
+    .calc-market { display: grid; grid-template-columns: auto .85fr 1.2fr auto; gap: 8px; align-items: center; padding-top: 8px; border-top: 1px solid var(--line); cursor: pointer; }
+    .calc-market.active { background: #f7fbf8; border-radius: 8px; padding: 8px; }
     .calc-market-name { color: var(--ink); font-size: 13px; font-weight: 800; line-height: 1.3; }
     .calc-market-name small { display: block; color: var(--muted); font-size: 12px; font-weight: 700; margin-top: 2px; }
     .calc-odds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
@@ -232,7 +241,9 @@
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid, .rules, .rules-body, .rule-grid, .sim-controls, .sim-summary, .sim-account, .calc-controls, .calc-summary, .calc-match, .calc-market, .calc-ticket-leg { grid-template-columns: 1fr; }
       .calc-match-head { flex-direction: column; }
-      .calc-ticket-head, .calc-ticket-meta { flex-direction: column; align-items: flex-start; }
+      .calc-ticket-head { flex-direction: column; align-items: flex-start; }
+      .calc-ticket-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .calc-ticket { max-width: none; }
       .stat { padding: 12px 13px; }
       .toolbar { align-items: flex-start; flex-direction: column; }
       .controls, #filters { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
@@ -1045,15 +1056,42 @@ function calculatorCandidateCount(){
   }
   return fixtures.size;
 }
-function toggleCalculatorCandidate(key){
+function setCalculatorMarketSelection(key, indexes){
   key = String(key);
   const match = calculatorMatchByKey(key);
+  if (!match) return false;
+  const next = [...new Set(indexes)]
+    .map(idx => Number(idx))
+    .filter(idx => Number.isInteger(idx) && idx >= 0 && idx <= 2)
+    .sort((a, b) => a - b);
+  if (!next.length) return false;
+  clearCalculatorFixtureSelection(calculatorFixtureKey(match), key);
+  calcCandidateKeys.add(key);
+  calcSelections.set(key, next);
+  return true;
+}
+function calculatorDefaultPickIndex(match){
+  const decimal = (match?.oddsDecimal || []).map(Number);
+  if (decimal.length >= 3 && decimal.every(value => Number.isFinite(value) && value > 1)) {
+    return decimal.indexOf(Math.min(...decimal.slice(0, 3)));
+  }
+  return pickIndex(match);
+}
+function selectCalculatorMarket(key){
+  key = String(key);
+  const match = calculatorMatchByKey(key);
+  if (!match) return;
+  setCalculatorMarketSelection(key, [calculatorDefaultPickIndex(match)]);
+  renderCalculator();
+}
+function toggleCalculatorCandidate(key){
+  key = String(key);
   if (calcCandidateKeys.has(key)) {
     calcCandidateKeys.delete(key);
     calcSelections.delete(key);
   } else {
-    if (match) clearCalculatorFixtureSelection(calculatorFixtureKey(match), key);
-    calcCandidateKeys.add(key);
+    const match = calculatorMatchByKey(key);
+    if (match) setCalculatorMarketSelection(key, [calculatorDefaultPickIndex(match)]);
   }
   renderCalculator();
 }
@@ -1065,11 +1103,11 @@ function toggleCalculatorSelection(key, idx){
   else current.add(idx);
   const next = [...current].sort((a, b) => a - b);
   if (next.length) {
-    if (match) clearCalculatorFixtureSelection(calculatorFixtureKey(match), key);
-    calcCandidateKeys.add(key);
-    calcSelections.set(key, next);
+    setCalculatorMarketSelection(key, next);
+  } else {
+    calcCandidateKeys.delete(key);
+    calcSelections.delete(key);
   }
-  else calcSelections.delete(key);
   renderCalculator();
 }
 function clearCalculatorSelections(){
@@ -1107,7 +1145,7 @@ function selectCalculatorPredictions(){
   calcSelections.clear();
   if (!calcCandidateKeys.size) {
     renderCalculator();
-    setCalculatorStatus('请先在列表里点“纳入”选定几场，再按预测选择；也可以直接点赔率手动选择。');
+    setCalculatorStatus('请先点“选此行”选定几场，再按预测选择；也可以直接点赔率手动选择。');
     return;
   }
   let selected = 0;
@@ -1117,12 +1155,12 @@ function selectCalculatorPredictions(){
     if (!calcCandidateKeys.has(key)) continue;
     const fixtureKey = calculatorFixtureKey(match);
     if (selectedFixtures.has(fixtureKey)) continue;
-    calcSelections.set(key, [pickIndex(match)]);
+    calcSelections.set(key, [calculatorDefaultPickIndex(match)]);
     selectedFixtures.add(fixtureKey);
     selected++;
   }
   renderCalculator();
-  if (!selected) setCalculatorStatus('当前候选场次已经不在最新计算器数据里，请重新纳入。');
+  if (!selected) setCalculatorStatus('当前选中场次已经不在最新计算器数据里，请重新选择。');
 }
 function calcCombinations(items, size){
   if (size <= 0) return [[]];
@@ -1284,8 +1322,11 @@ function buildCalculatorTicket(entryList, calc, index){
   const combinedOdds = legs.reduce((acc, leg) => acc * Number(leg.odds || 1), 1);
   const payout = calcLimitedPayout(combinedOdds, calc.passSize, calc.times);
   const stake = 2 * calc.times;
+  const serial = `SIM-${Date.now().toString(36).toUpperCase()}-${String(index).padStart(3, '0')}`;
   return {
     index,
+    serial,
+    issuedAt: new Date().toLocaleString('zh-CN', {hour12: false}),
     passType: denormalizeCalculatorPassType(calc.passType),
     times: calc.times,
     stake,
@@ -1303,7 +1344,7 @@ function buildCalculatorTickets(limit=120){
     const candidateCount = calculatorCandidateCount();
     const needed = calc.passType === 'single' ? 1 : calc.passSize;
     const message = candidateCount
-      ? `已纳入 ${candidateCount} 场，${denormalizeCalculatorPassType(calc.passType)} 至少需要 ${needed} 场已选结果；请点“按预测选择”或手动点赔率后再模拟出票。`
+      ? `已选中 ${candidateCount} 场，${denormalizeCalculatorPassType(calc.passType)} 至少需要 ${needed} 场已选结果；请点“按预测选择”或手动点赔率后再模拟出票。`
       : '当前没有可出票的选择。';
     return {calc, legs, tickets, omitted: 0, message};
   }
@@ -1339,13 +1380,28 @@ function renderCalculatorTickets(options={}){
   }
   list.innerHTML = tickets.map(ticket => `
     <div class="calc-ticket">
+      <div class="calc-ticket-top">
+        <div class="calc-ticket-brand"><span>中国体育彩票</span><b>竞彩足球模拟票</b></div>
+        <div class="calc-ticket-stamp">模拟票样</div>
+      </div>
+      <div class="calc-ticket-code">票号 ${escapeHtml(ticket.serial)}<br>出票时间 ${escapeHtml(ticket.issuedAt)} · 第 ${String(ticket.index).padStart(3, '0')} 张</div>
       <div class="calc-ticket-meta">
-        <b>票 ${String(ticket.index).padStart(3, '0')} · ${escapeHtml(ticket.passType)} · ${ticket.times}倍</b>
-        <span>投入 ${formatCalcMoney(ticket.stake)} · 合成赔率 ${escapeHtml(ticket.combinedOdds)} · 预计返奖 ${formatCalcMoney(ticket.payout)} · 盈利 ${formatCalcMoney(ticket.profit)}</span>
+        <span>过关方式<b>${escapeHtml(ticket.passType)}</b></span>
+        <span>倍数<b>${ticket.times}倍</b></span>
+        <span>投入<b>${formatCalcMoney(ticket.stake)}</b></span>
+        <span>预计返奖<b>${formatCalcMoney(ticket.payout)}</b></span>
       </div>
       <div class="calc-ticket-legs">
-        ${ticket.legs.map(leg => `<div class="calc-ticket-leg"><span><b>${escapeHtml(leg.matchNo ? `${leg.matchNo} · ` : '')}${escapeHtml(leg.match)}</b><br>${escapeHtml(leg.market)} · ${escapeHtml(leg.pick)}</span><span>${Number(leg.odds || 0).toFixed(2)}</span></div>`).join('')}
+        ${ticket.legs.map(leg => `<div class="calc-ticket-leg"><span><b>${escapeHtml(leg.matchNo ? `${leg.matchNo} · ` : '')}${escapeHtml(leg.match)}</b><br>${escapeHtml(leg.market)} · 选 ${escapeHtml(leg.pick)}</span><strong>${Number(leg.odds || 0).toFixed(2)}</strong></div>`).join('')}
       </div>
+      <div class="calc-ticket-meta">
+        <span>合成赔率<b>${escapeHtml(ticket.combinedOdds)}</b></span>
+        <span>理论盈利<b>${formatCalcMoney(ticket.profit)}</b></span>
+        <span>注数<b>1注</b></span>
+        <span>类型<b>模拟</b></span>
+      </div>
+      <div class="calc-ticket-barcode" aria-hidden="true"></div>
+      <div class="calc-ticket-note">模拟出票仅用于页面复盘和模拟盘记录，不是购彩平台、实体票据或真实购买凭证。</div>
     </div>`).join('') + (omitted ? `<div class="calc-ticket-empty">还有 ${omitted} 张票未展开，请减少选择或降低过关组合。</div>` : '');
 }
 function simLegFromCalculator(entry){
@@ -1596,7 +1652,7 @@ function renderCalculatorSummary(calc){
     ? `${formatCalcMoney(calc.minPayout)} - ${formatCalcMoney(calc.maxPayout)}`
     : formatCalcMoney(calc.maxPayout);
   el.innerHTML = `
-    <div class="sim-metric"><span>候选 / 已选</span><b>${calc.candidateCount} / ${calc.selectedCount}</b></div>
+    <div class="sim-metric"><span>选中 / 已选</span><b>${calc.candidateCount} / ${calc.selectedCount}</b></div>
     <div class="sim-metric"><span>注数</span><b>${calc.betCount}</b></div>
     <div class="sim-metric"><span>投入</span><b>${formatCalcMoney(calc.stake)}</b></div>
     <div class="sim-metric"><span>返奖区间</span><b>${payoutText}</b></div>
@@ -1646,14 +1702,14 @@ function renderCalculator(){
         const included = calcCandidateKeys.has(key);
         const keyArg = JSON.stringify(key);
         const support = `${match.supportsSingle === false ? '不支持单关' : '支持单关'} · ${match.supportsAllUp === false ? '不支持串关' : '支持串关'}`;
-        return `<div class="calc-market">
-          <button type="button" class="calc-include ${included ? 'active' : ''}" onclick='toggleCalculatorCandidate(${keyArg})'>${included ? '已纳入' : '纳入'}</button>
+        return `<div class="calc-market ${included ? 'active' : ''}" onclick='selectCalculatorMarket(${keyArg})'>
+          <button type="button" class="calc-include ${included ? 'active' : ''}" onclick='event.stopPropagation(); toggleCalculatorCandidate(${keyArg})'>${included ? '已选中' : '选此行'}</button>
           <div class="calc-market-name">
             ${escapeHtml(marketLabel(match))}
             <small>${match.oddsUpdateTime ? `更新 ${escapeHtml(match.oddsUpdateTime)}` : '固定奖金'}</small>
           </div>
           <div class="calc-odds">
-            ${labels.map((label, idx) => `<button type="button" class="calc-odd ${selected.has(idx) ? 'active' : ''}" onclick='toggleCalculatorSelection(${keyArg}, ${idx})'>${label}<small>${decimalOddsLabel(match, idx)}</small></button>`).join('')}
+            ${labels.map((label, idx) => `<button type="button" class="calc-odd ${selected.has(idx) ? 'active' : ''}" onclick='event.stopPropagation(); toggleCalculatorSelection(${keyArg}, ${idx})'>${label}<small>${decimalOddsLabel(match, idx)}</small></button>`).join('')}
           </div>
           <div class="calc-support">${escapeHtml(support)}</div>
         </div>`;
