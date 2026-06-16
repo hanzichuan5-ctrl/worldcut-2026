@@ -155,6 +155,10 @@
     .result-row .hit { color: #13795b; font-weight: 700; }
     .result-row .miss { color: #c0392b; font-weight: 700; }
     .result-row .skip { color: var(--muted); }
+    .results-pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--line); background: #fbf8ef; color: var(--muted); font-size: 13px; }
+    .results-pager-actions { display: flex; align-items: center; gap: 8px; }
+    .results-pager button { padding: 7px 10px; background: #fffaf0; }
+    .results-pager button:disabled { opacity: .45; cursor: not-allowed; }
     .odds-import-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
     .jump-sim { background: var(--accent); color: #fff; border-color: transparent; }
     .odds-trend { border-top: 1px solid var(--line); background: #fffaf0; padding: 12px 16px 14px; }
@@ -203,6 +207,8 @@
       .trend-grid { grid-template-columns: 1fr; }
       .trend-card { display: grid; grid-template-columns: 76px 1fr 54px; align-items: center; gap: 8px; }
       .result-row { grid-template-columns: 1fr; gap: 3px; padding: 10px 15px; }
+      .results-pager { align-items: stretch; flex-direction: column; padding: 10px 15px; }
+      .results-pager-actions { display: grid; grid-template-columns: 1fr 1fr; }
       .trend-card span, .trend-card .trend-now { margin: 0; }
       .trend-card svg { height: 34px; }
       .ai-result pre { max-height: 420px; padding: 12px; }
@@ -287,6 +293,7 @@
         </div>
         <div class="results-summary" id="resultsSummary">正在加载赛果数据...</div>
         <div class="results-list" id="resultsList"></div>
+        <div class="results-pager" id="resultsPager" style="display:none"></div>
       </section>
 
       <section class="rules" aria-label="判断评分规则">
@@ -419,9 +426,12 @@ const staticMatches = matches.map(match => ({...match, odds: [...match.odds], pr
 let dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
 let active = '全部';
 let finishedResults = [];
+let resultsRows = [];
+let resultsPage = 1;
 const aiResults = new Map();
 const GLOBAL_SIM_ACCOUNT_ID = 'global';
 const AUTO_BET_STRATEGY_VERSION = 'research-v3';
+const RESULTS_PAGE_SIZE = 10;
 let simAccount = loadSimAccount();
 let llmBetHistory = loadLlmBetHistory();
 let postReviews = [];
@@ -1441,6 +1451,58 @@ function toggleSimPanel(){
   if (button) button.textContent = collapsed ? '模拟盘' : '收起模拟盘';
   if (!collapsed) panel.scrollIntoView({behavior:'smooth', block:'start'});
 }
+function resultRowHtml(r){
+  const homeName = escapeHtml(r.home || '');
+  const awayName = escapeHtml(r.away || '');
+  const homeEn = escapeHtml(r.home_en || '');
+  const awayEn = escapeHtml(r.away_en || '');
+  const teams = r.home === r.home_en ? homeName : `${homeName} <span style="color:var(--muted);font-size:12px">${homeEn}</span>`;
+  const away = r.away === r.away_en ? awayName : `${awayName} <span style="color:var(--muted);font-size:12px">${awayEn}</span>`;
+  const directionBadge = r.pick_hit === true
+    ? ' <span class="hit" style="font-size:12px">方向对</span>'
+    : r.pick_hit === false
+      ? ' <span class="miss" style="font-size:12px">方向错</span>'
+      : '';
+  let resultCell = '';
+  if (r.score_hit === true) resultCell = '<span class="hit">✅ 命中</span>';
+  else if (r.score_hit === false) resultCell = '<span class="miss">❌ 未中</span>';
+  else resultCell = '<span class="skip">⚪ 无预测</span>';
+  return `<div class="result-row">
+    <div><strong>${teams}</strong> <span class="vs">vs</span> <strong>${away}</strong></div>
+    <div><strong>${escapeHtml(r.actual_score || '-')}</strong></div>
+    <div>${escapeHtml(r.predicted_score || '-')}</div>
+    <div>${escapeHtml(r.predicted_pick || '-')}${directionBadge}</div>
+    <div>${resultCell}</div>
+  </div>`;
+}
+function renderResultsPage(){
+  const list = document.getElementById('resultsList');
+  const pager = document.getElementById('resultsPager');
+  if (!list || !pager) return;
+  const pageCount = Math.max(1, Math.ceil(resultsRows.length / RESULTS_PAGE_SIZE));
+  resultsPage = Math.min(Math.max(1, resultsPage), pageCount);
+  const start = (resultsPage - 1) * RESULTS_PAGE_SIZE;
+  const pageRows = resultsRows.slice(start, start + RESULTS_PAGE_SIZE);
+  const header = `<div class="result-row"><div>比赛</div><div>比分</div><div>预测比分</div><div>预测方向</div><div>结果</div></div>`;
+  list.innerHTML = header + pageRows.map(resultRowHtml).join('');
+  if (resultsRows.length <= RESULTS_PAGE_SIZE) {
+    pager.style.display = 'none';
+    pager.innerHTML = '';
+    return;
+  }
+  pager.style.display = 'flex';
+  pager.innerHTML = `
+    <span>第 <b>${resultsPage}</b> / ${pageCount} 页 · 共 ${resultsRows.length} 条 · 每页 ${RESULTS_PAGE_SIZE} 条</span>
+    <div class="results-pager-actions">
+      <button type="button" onclick="setResultsPage(${resultsPage - 1})" ${resultsPage <= 1 ? 'disabled' : ''}>上一页</button>
+      <button type="button" onclick="setResultsPage(${resultsPage + 1})" ${resultsPage >= pageCount ? 'disabled' : ''}>下一页</button>
+    </div>
+  `;
+}
+function setResultsPage(page){
+  resultsPage = page;
+  renderResultsPage();
+}
 renderFilters(); render();
 ['bankroll','riskMode','maxStake','minEdge'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', () => {
@@ -1477,16 +1539,32 @@ async function loadResults(options={}){
     if (!data.results || !data.results.length) {
       summary.innerHTML = '<b>暂无已完赛数据。</b>世界杯开赛后这里会自动显示已结束比赛 vs 预测对比。';
       list.innerHTML = '';
+      const pager = document.getElementById('resultsPager');
+      if (pager) {
+        pager.style.display = 'none';
+        pager.innerHTML = '';
+      }
       return;
     }
     const acc = data.accuracy != null ? `${data.accuracy}%` : '-';
     const color = data.accuracy >= 67 ? '#13795b' : (data.accuracy >= 50 ? '#e67e22' : '#c0392b');
+    const directionTotal = Number(data.direction_total ?? ((data.direction_hits || 0) + (data.direction_misses || 0)));
+    const directionAccValue = data.direction_accuracy != null
+      ? Number(data.direction_accuracy)
+      : directionTotal
+        ? Number((((data.direction_hits || 0) / directionTotal) * 100).toFixed(1))
+        : null;
+    const directionAcc = directionAccValue != null ? `${directionAccValue}%` : '-';
+    const directionColor = directionAccValue >= 67 ? '#13795b' : (directionAccValue >= 50 ? '#e67e22' : '#c0392b');
     summary.innerHTML = `
       <span>已完赛 <b>${data.total_finished}</b> 场</span>
       <span>有预测 <b>${data.total_predicted}</b> 场</span>
       <span>比分命中 <b class="hit">${data.hits}</b></span>
       <span>比分未中 <b class="miss">${data.misses}</b></span>
       <span>比分命中率 <b style="color:${color}">${acc}</b></span>
+      <span>方向命中 <b class="hit">${data.direction_hits || 0}</b></span>
+      <span>方向未中 <b class="miss">${data.direction_misses || 0}</b></span>
+      <span>胜负准确率 <b style="color:${directionColor}">${directionAcc}</b></span>
       <span style="color:var(--muted);font-size:12px">${data.generated_at || ''}</span>
     `;
     const kickoffOf = r => {
@@ -1495,35 +1573,17 @@ async function loadResults(options={}){
       return target ? target.time : '';
     };
     const sortedResults = data.results.slice().sort((a, b) => kickoffOf(b).localeCompare(kickoffOf(a)));
-    const header = `<div class="result-row"><div>比赛</div><div>比分</div><div>预测比分</div><div>预测方向</div><div>结果</div></div>`;
-    const rows = sortedResults.map(r => {
-      const homeName = escapeHtml(r.home || '');
-      const awayName = escapeHtml(r.away || '');
-      const homeEn = escapeHtml(r.home_en || '');
-      const awayEn = escapeHtml(r.away_en || '');
-      const teams = r.home === r.home_en ? homeName : `${homeName} <span style="color:var(--muted);font-size:12px">${homeEn}</span>`;
-      const away = r.away === r.away_en ? awayName : `${awayName} <span style="color:var(--muted);font-size:12px">${awayEn}</span>`;
-      let resultCell = '';
-      const directionBadge = r.pick_hit === true
-        ? ' <span class="hit" style="font-size:12px">方向对</span>'
-        : r.pick_hit === false
-          ? ' <span class="miss" style="font-size:12px">方向错</span>'
-          : '';
-      if (r.score_hit === true) resultCell = '<span class="hit">✅ 命中</span>';
-      else if (r.score_hit === false) resultCell = '<span class="miss">❌ 未中</span>';
-      else resultCell = '<span class="skip">⚪ 无预测</span>';
-      return `<div class="result-row">
-        <div><strong>${teams}</strong> <span class="vs">vs</span> <strong>${away}</strong></div>
-        <div><strong>${escapeHtml(r.actual_score || '-')}</strong></div>
-        <div>${escapeHtml(r.predicted_score || '-')}</div>
-        <div>${escapeHtml(r.predicted_pick || '-')}${directionBadge}</div>
-        <div>${resultCell}</div>
-      </div>`;
-    }).join('');
-    list.innerHTML = header + rows;
+    resultsRows = sortedResults;
+    resultsPage = 1;
+    renderResultsPage();
   } catch (err) {
     const summary = document.getElementById('resultsSummary');
     if (summary) summary.innerHTML = `<b>加载赛果失败：</b>${escapeHtml(err.message)}`;
+    const pager = document.getElementById('resultsPager');
+    if (pager) {
+      pager.style.display = 'none';
+      pager.innerHTML = '';
+    }
   } finally {
     if (button) {
       button.disabled = false;

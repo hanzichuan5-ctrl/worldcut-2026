@@ -2057,6 +2057,8 @@ def _build_match_results() -> dict:
         "misses": misses,
         "direction_hits": direction_hits,
         "direction_misses": direction_misses,
+        "direction_total": direction_hits + direction_misses,
+        "direction_accuracy": round(direction_hits / (direction_hits + direction_misses) * 100, 1) if (direction_hits + direction_misses) else None,
         "accuracy": round(hits / total_pred * 100, 1) if total_pred else None,
         "generated_at": beijing_time(),
     }
