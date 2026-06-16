@@ -1127,12 +1127,14 @@ def summarize_analysis(text: str) -> str:
 
 
 def extract_predicted_score(text: str) -> str:
+    clean_text = re.sub(r"[*_`]+", "", text or "")
     patterns = [
-        r"推荐比分[：:]\s*([^\n；;，,]+)",
-        r"比分[：:]\s*([^\n；;，,]+)",
+        r"推荐比分\s*[：:]\s*([^\n；;，,]+)",
+        r"比分\s*[：:]\s*([^\n；;，,]+)",
+        r"推荐比分\s*\|\s*([^|\n]+)",
     ]
     for pattern in patterns:
-        match = re.search(pattern, text)
+        match = re.search(pattern, clean_text)
         if match:
             return match.group(1).strip().strip("*")
     return ""
