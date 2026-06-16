@@ -95,6 +95,8 @@
     .tag { border-radius: 999px; padding: 4px 8px; font-size: 12px; background: #e8efe8; color: #265a43; font-weight: 700; }
     .tag.market { background: #f4ead1; color: #7a5410; }
     .tag.risk { background: #f1dddd; color: #8d2c24; }
+    .tag.draw { background: #e2e8f3; color: #254e7a; }
+    .empty-state { grid-column: 1 / -1; background: #fffaf0; border: 1px solid var(--line); border-radius: 8px; padding: 28px; color: var(--muted); line-height: 1.6; }
     .sources { margin-top: 24px; padding: 18px; }
     .sources h2 { margin: 0 0 8px; color: var(--ink); font-size: 22px; }
     .sources a { color: var(--blue); }
@@ -222,9 +224,9 @@
     <div class="hero-inner">
       <div class="eyebrow">2026 年世界杯 · 6 月 11 日至 6 月 17 日赛程窗口</div>
       <h1>未来几天世界杯赛程预测</h1>
-      <p>覆盖开幕日至 6 月 17 日的 25 场小组赛。预测基于当前公开赛程、盘口隐含概率、球队实力层级、主办国/场地因素与小组赛首战倾向；正式名单、伤病和临场首发尚未完全确定，需赛前更新。</p>
+      <p>展示尚未完赛的近期小组赛预测。预测基于当前公开赛程、盘口隐含概率、球队实力层级、主办国/场地因素、小组赛首战倾向与平局触发规则；正式名单、伤病和临场首发尚未完全确定，需赛前更新。</p>
       <div class="stats">
-        <div class="stat"><b id="statMatches">25</b><span>覆盖比赛</span></div>
+        <div class="stat"><b id="statMatches">25</b><span>未完赛比赛</span></div>
         <div class="stat"><b>7</b><span>覆盖天数</span></div>
         <div class="stat"><b id="statFavs">0</b><span>非平局预测</span></div>
         <div class="stat"><b>6月10日</b><span>资料快照日期</span></div>
@@ -237,7 +239,7 @@
         <h2>比赛卡片</h2>
         <div class="controls"><button class="jump-sim" id="simToggleBtn" type="button" onclick="toggleSimPanel()">模拟盘</button><span id="filters"></span></div>
       </div>
-      <div class="notice">说明：这是赛前预测页面，不是投注建议。静态卡片先用盘口/实力层级作为基础信号；“查看分析”会展开显示 LLM 按双轨背离框架生成的动态判断。比赛列表读取后端缓存，时间统一显示为北京时间。</div>
+      <div class="notice">说明：这是赛前预测页面，不是投注建议。静态卡片先用盘口/实力层级和平局触发规则作为基础信号；“查看分析”会展开显示 LLM 按双轨背离框架生成的动态判断。比赛卡片只展示未完赛场次，赛后复盘保留已完赛结果；时间统一显示为北京时间。</div>
 
       <section class="sim-panel collapsed" id="simPanel" aria-label="模拟盘">
         <div class="sim-head">
@@ -328,6 +330,7 @@ function scheduleMatch(id, dateTime, group, home, away, venue, result=''){
     away,
     venue: `${group} · ${venue}`,
     odds: [120, 220, 220],
+    finished: settled,
     pick: settled ? '已完赛' : '待预测',
     api: settled ? '赛果' : '待分析',
     score: settled ? result : '待预测',
@@ -415,6 +418,7 @@ const matches = [
 const staticMatches = matches.map(match => ({...match, odds: [...match.odds], probs: [...match.probs]}));
 let dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
 let active = '全部';
+let finishedResults = [];
 const aiResults = new Map();
 const GLOBAL_SIM_ACCOUNT_ID = 'global';
 const AUTO_BET_STRATEGY_VERSION = 'research-v3';
@@ -441,6 +445,7 @@ for (const match of matches) {
   match.baseOdds = [...match.odds];
   match.oddsSource = '静态兜底';
   match.oddsDecimal = match.odds.map(americanToDecimal);
+  applyDrawPrediction(match);
 }
 function americanToDecimal(odds){
   return odds < 0 ? 1 + (100 / Math.abs(odds)) : 1 + (odds / 100);
@@ -465,6 +470,7 @@ function probsFromDecimal(decimalOdds){
   return implied.map(v => Math.round((v / total) * 100));
 }
 function pickFromProbs(home, away, probs){
+  if (shouldPickDraw(probs, confFromProb(Math.max(...probs)))) return {pick: '平局', api: '平局'};
   const max = Math.max(...probs);
   const idx = probs.indexOf(max);
   if (idx === 0) return {pick: home, api: '主胜'};
@@ -484,7 +490,7 @@ function scoreFromMarket(api, probs){
   const draw = p[1] || 0;
   const openGame = draw < 24;
   if (api === '平局') {
-    if (draw >= 34) return '1-1';
+    if (draw >= 28.5) return '1-1';
     return openGame ? '2-2' : '0-0';
   }
   const homeWin = api === '主胜';
@@ -508,8 +514,52 @@ function scoreFromMarket(api, probs){
   }
   return homeWin ? `${winner}-${loser}` : `${loser}-${winner}`;
 }
+function drawSignalFromProbs(probs, conf=''){
+  const values = Array.isArray(probs) && probs.length >= 3 ? probs.map(v => Number(v) || 0) : [34, 33, 33];
+  const top = Math.max(values[0], values[2]);
+  const sideGap = Math.abs(values[0] - values[2]);
+  const drawGap = top - values[1];
+  const drawLeads = values[1] >= top;
+  const closeEnough = values[1] >= 29 && drawGap <= 6 && top < 43;
+  const balancedLowScore = conf === '中' && values[1] >= 28.5 && top <= 46.5 && drawGap <= 13.5;
+  const recommend = drawLeads || balancedLowScore || (sideGap <= 8 && closeEnough);
+  return {
+    recommend,
+    reason: drawLeads
+      ? '平局综合概率已不低于胜负两端'
+      : balancedLowScore
+      ? '低置信度接近五五开，平局概率达到触发线'
+      : '强弱差距小，平局概率贴近最高胜率'
+  };
+}
+function shouldPickDraw(probs, conf=''){
+  return drawSignalFromProbs(probs, conf).recommend;
+}
+function likelyDrawScore(score){
+  const parts = String(score || '').split('-').map(value => Number(value.trim()));
+  if (parts.length !== 2 || parts.some(value => !Number.isFinite(value))) return '1-1';
+  const total = parts[0] + parts[1];
+  if (total <= 1) return '0-0';
+  if (total >= 4) return '2-2';
+  return '1-1';
+}
+function applyDrawPrediction(match){
+  if (!match || match.finished || match.api === '赛果') return match;
+  if (match.api === '待分析' || match.pick === '待预测' || match.conf === '待评估') return match;
+  const signal = drawSignalFromProbs(match.probs, match.conf);
+  match.drawSignal = signal;
+  if (!signal.recommend || match.api === '平局') return match;
+  match.pick = '平局';
+  match.api = '平局';
+  match.score = likelyDrawScore(match.score);
+  match.conf = match.conf === '极高' || match.conf === '高' ? '中高' : '中';
+  if (!String(match.why || '').includes('平局判断')) {
+    match.why = `${match.why} 平局判断：${signal.reason}，按赛前保守和小组赛容错逻辑纳入平局预测。`;
+  }
+  return match;
+}
 function refreshDateFilters(){
-  dates = ['全部', ...Array.from(new Set(matches.map(m => m.d)))];
+  dates = ['全部', ...Array.from(new Set(pendingMatches().map(m => m.d)))];
   if (!dates.includes(active)) active = '全部';
 }
 function sportteryToMatch(item, idx){
@@ -621,6 +671,33 @@ function findSportteryMatch(item){
     return (home.includes(mh) || mh.includes(home)) && (away.includes(ma) || ma.includes(away));
   });
 }
+function findScheduleMatch(targetList, home, away){
+  const h = normalizeTeamName(home);
+  const a = normalizeTeamName(away);
+  if (!h || !a) return null;
+  return targetList.find(match => {
+    const mh = normalizeTeamName(match.home);
+    const ma = normalizeTeamName(match.away);
+    return (h.includes(mh) || mh.includes(h)) && (a.includes(ma) || ma.includes(a));
+  });
+}
+function markFinishedMatches(targetList){
+  for (const r of finishedResults) {
+    if (!r || !r.actual_score) continue;
+    let target = findScheduleMatch(targetList, r.home, r.away);
+    if (!target && r.home_en) target = findScheduleMatch(targetList, r.home_en, r.away_en);
+    if (!target) continue;
+    const dir = r.actual_pick ? `，方向 ${r.actual_pick}` : '';
+    Object.assign(target, {
+      finished: true,
+      pick: '已完赛',
+      api: '赛果',
+      score: r.actual_score,
+      conf: '赛果',
+      why: `官方赛果 ${r.actual_score}${dir}（来源 ${r.source || 'worldcup26.ir'}）。已完赛比赛不再触发新的 LLM 预测。`
+    });
+  }
+}
 function walkJson(value, out=[]){
   if (Array.isArray(value)) {
     for (const child of value) walkJson(child, out);
@@ -722,8 +799,10 @@ function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞
       probs: market.probs,
       why: market.why
     });
+    applyDrawPrediction(target);
     applied++;
   }
+  markFinishedMatches(matches);
   refreshDateFilters();
   const source = document.getElementById('oddsSource');
   const ignored = valid.length - applied;
@@ -1175,7 +1254,7 @@ function renderLedger(){
     }).join('')}`;
 }
 function renderSimulation(){
-  const visible = active === '全部' ? matches : matches.filter(m => m.d === active);
+  const visible = active === '全部' ? pendingMatches() : pendingMatches().filter(m => m.d === active);
   let totalStake = 0, totalProfit = 0, count = 0;
   const activeBets = new Map((simAccount.bets || []).map(bet => [String(bet.id), bet]));
   const parlayByMatch = new Map();
@@ -1230,13 +1309,13 @@ function renderFilters(){
   el.querySelectorAll('button').forEach(b=>b.onclick=()=>{active=b.dataset.date; render(); renderFilters();});
 }
 function render(){
-  const list = active==='全部' ? matches : matches.filter(m=>m.d===active);
-  document.getElementById('cards').innerHTML = list.map(m=>`
+  const list = active==='全部' ? pendingMatches() : pendingMatches().filter(m=>m.d===active);
+  document.getElementById('cards').innerHTML = list.length ? list.map(m=>`
     <article class="card">
       <div class="card-head"><div><div class="date">北京时间 ${m.time}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${marketLabel(m)} · ${m.api}</div></div><div class="venue">${m.venue}<br>${String(m.oddsSource || '').includes('中国体育彩票竞彩网') ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
       <div class="teams">
         <div class="match"><div class="team"><strong>${m.home}</strong><span>主队</span></div><div class="vs">对阵</div><div class="team" style="text-align:right"><strong>${m.away}</strong><span>客队</span></div></div>
-        <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span><span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
+        <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span>${m.api === '平局' ? '<span class="tag draw">平局触发</span>' : ''}<span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
       </div>
       <div class="probs"><div class="prob"><span>${m.home}胜</span><b>${m.probs[0]}%</b></div><div class="prob"><span>平局</span><b>${m.probs[1]}%</b></div><div class="prob"><span>${m.away}胜</span><b>${m.probs[2]}%</b></div></div>
       <div class="odds-row"><div class="odds-box"><span>${m.home}胜赔率</span><b>${decimalOddsLabel(m, 0)}</b></div><div class="odds-box"><span>平局赔率</span><b>${decimalOddsLabel(m, 1)}</b></div><div class="odds-box"><span>${m.away}胜赔率</span><b>${decimalOddsLabel(m, 2)}</b></div></div>
@@ -1247,9 +1326,9 @@ function render(){
       <div class="ai-summary" id="summary-${m.id}"></div>
       <div class="ai-result" id="ai-${m.id}"><pre></pre></div>
       <div class="history-panel" id="history-${m.id}"></div>
-    </article>`).join('');
-  document.getElementById('statMatches').textContent = matches.length;
-  document.getElementById('statFavs').textContent = matches.filter(m=>!['平局', '待预测', '已完赛'].includes(m.pick)).length;
+    </article>`).join('') : '<div class="empty-state">当前赛程窗口内没有未完赛比赛。新赛程或数据更新后会自动显示新的赛前预测卡片；已完赛复盘请看上方赛果面板。</div>';
+  document.getElementById('statMatches').textContent = pendingMatches().length;
+  document.getElementById('statFavs').textContent = pendingMatches().filter(m=>!['平局', '待预测', '已完赛'].includes(m.pick)).length;
   document.querySelectorAll('[data-ai]').forEach(btn => {
     btn.onclick = () => runAiReview(btn.dataset.ai, btn);
   });
@@ -1387,6 +1466,11 @@ async function loadResults(options={}){
   try {
     const res = await fetch('/api/results');
     const data = await res.json();
+    finishedResults = Array.isArray(data.results) ? data.results : [];
+    markFinishedMatches(staticMatches);
+    markFinishedMatches(matches);
+    renderFilters();
+    render();
     const summary = document.getElementById('resultsSummary');
     const list = document.getElementById('resultsList');
     if (!summary || !list) return;
@@ -1405,8 +1489,14 @@ async function loadResults(options={}){
       <span>比分命中率 <b style="color:${color}">${acc}</b></span>
       <span style="color:var(--muted);font-size:12px">${data.generated_at || ''}</span>
     `;
+    const kickoffOf = r => {
+      let target = findScheduleMatch(staticMatches, r.home, r.away);
+      if (!target && r.home_en) target = findScheduleMatch(staticMatches, r.home_en, r.away_en);
+      return target ? target.time : '';
+    };
+    const sortedResults = data.results.slice().sort((a, b) => kickoffOf(b).localeCompare(kickoffOf(a)));
     const header = `<div class="result-row"><div>比赛</div><div>比分</div><div>预测比分</div><div>预测方向</div><div>结果</div></div>`;
-    const rows = data.results.map(r => {
+    const rows = sortedResults.map(r => {
       const homeName = escapeHtml(r.home || '');
       const awayName = escapeHtml(r.away || '');
       const homeEn = escapeHtml(r.home_en || '');

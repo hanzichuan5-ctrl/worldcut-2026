@@ -143,6 +143,13 @@ RULES = """worldcup-2026-predictor skill 分析流程：
 - 基本面支持一方，但赔率或新闻导向支持另一方：标记“背离”，降低置信度并解释可能原因。
 - 裁判严谨度高时，提高红黄牌、点球、定位球和弱队守平概率的权重。
 
+- 平局触发判断：
+  1. 平局综合概率高于或贴近主胜/客胜最高值时，必须把“平局”作为独立候选，而不是只写冷门风险。
+  2. 强弱差距小、盘口接近均势、静态平局概率约 29% 以上，且最高胜率低于约 43% 时，优先考虑平局。
+  3. 若静态判断为“中”置信度、最高胜率不超过约 46%、平局概率达到约 29%，且平局距离最高胜率不超过约 13 个百分点，应进入低比分平局候选；边界值允许半个百分点容差，避免四舍五入后漏判。
+  4. 小组赛首战、低比分预期、防守纪律强、临场阵容不明或裁判尺度偏严时，上调平局权重。
+  5. 如果最终不选平局，必须解释为什么平局风险不足以压过主胜/客胜。
+
 置信度分档：极高=胜率约75%以上；高=63%-74%；中高=55%-62%；中=低于55%或平局权重高。"""
 
 
@@ -1227,7 +1234,43 @@ def probs_from_decimal(decimal_odds: list[float]) -> list[int]:
     return [round((value / total) * 100) for value in implied]
 
 
+def draw_assessment_from_probs(probs: list[int], confidence: str = "") -> dict:
+    values = [(int(value) if isinstance(value, int) else round(float(value or 0))) for value in (probs or [34, 33, 33])[:3]]
+    while len(values) < 3:
+        values.append(0)
+    side_top = max(values[0], values[2])
+    side_gap = abs(values[0] - values[2])
+    draw_gap = side_top - values[1]
+    draw_leads = values[1] >= side_top
+    close_enough = values[1] >= 29 and draw_gap <= 6 and side_top < 43
+    balanced_low_score = confidence == "中" and values[1] >= 28.5 and side_top <= 46.5 and draw_gap <= 13.5
+    recommend_draw = draw_leads or balanced_low_score or (side_gap <= 8 and close_enough)
+    signals = []
+    if draw_leads:
+        signals.append("平局概率不低于胜负两端")
+    if close_enough:
+        signals.append("平局概率贴近最高胜率且热门胜率不高")
+    if balanced_low_score:
+        signals.append("低置信度接近五五开且平局概率达到触发线")
+    if not signals:
+        signals.append("平局可作为风险项复核，但未触发优先推荐")
+    return {
+        "type": "draw_assessment",
+        "recommend_draw": recommend_draw,
+        "probs": values,
+        "draw_gap_to_best_side": round(draw_gap, 1),
+        "side_gap": round(side_gap, 1),
+        "signals": signals,
+    }
+
+
+def should_pick_draw(probs: list[int], confidence: str = "") -> bool:
+    return bool(draw_assessment_from_probs(probs, confidence).get("recommend_draw"))
+
+
 def pick_from_probs(home: str, away: str, probs: list[int]) -> tuple[str, str]:
+    if should_pick_draw(probs, conf_from_prob(max(probs))):
+        return "平局", "平局"
     idx = probs.index(max(probs))
     if idx == 0:
         return home, "主胜"
@@ -1253,7 +1296,7 @@ def score_from_market(api_pick: str, probs: list[int]) -> str:
     draw = values[1] or 0
     open_game = draw < 24
     if api_pick == "平局":
-        if draw >= 34:
+        if draw >= 28.5:
             return "1-1"
         return "2-2" if open_game else "0-0"
     home_win = api_pick == "主胜"
@@ -1845,6 +1888,7 @@ def collect_match_intelligence(match: dict) -> list[dict]:
     home = TEAM_EN.get(match.get("home", ""), match.get("home", ""))
     away = TEAM_EN.get(match.get("away", ""), match.get("away", ""))
     collected = [
+        draw_assessment_from_probs(match.get("probs") or [], match.get("conf") or ""),
         {
             "type": "official_source",
             "title": "FIFA official match schedule, fixtures and results",
@@ -2606,6 +2650,7 @@ def call_openai(api_key: str, match: dict, intelligence: list[dict]) -> str:
 - 胜平负概率：
 - 竞猜选项：
 - 置信度：
+- 平局触发判断：是否触发；若触发但最终不选平局，说明原因。
 
 2. 关键依据
 - 小组赛赛程/已结束赛果/小组排名：优先使用在线情报工具里的可靠来源；没有可靠结果就标注需补充。
