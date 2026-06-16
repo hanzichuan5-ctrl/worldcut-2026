@@ -148,7 +148,9 @@
     .calc-status { margin-top: 10px; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 10px 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
     .calc-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
     .calc-list { display: grid; gap: 8px; margin-top: 10px; }
-    .calc-match { display: grid; grid-template-columns: 1.3fr 1.2fr auto; gap: 10px; align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+    .calc-match { display: grid; grid-template-columns: auto 1.3fr 1.2fr auto; gap: 10px; align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+    .calc-include { min-width: 58px; height: 36px; padding: 0 10px; border-radius: 8px; background: #fff; font-size: 12px; font-weight: 800; }
+    .calc-include.active { background: #e9f6ef; color: var(--green); border-color: rgba(19,121,91,.35); }
     .calc-match-title b { display: block; color: var(--ink); }
     .calc-match-title span { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
     .calc-odds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
@@ -521,6 +523,7 @@ let workerInfo = {};
 let workerLog = [];
 let calcMatches = [];
 let calcSelections = new Map();
+let calcCandidateKeys = new Set();
 let calcSourceInfo = {};
 let calcRefreshTimer = null;
 let calcRefreshRunning = false;
@@ -972,26 +975,53 @@ function calculatorSourceMatches(){
 function calculatorSelectionsFor(key){
   return calcSelections.get(String(key)) || [];
 }
+function calculatorCandidateCount(){
+  return [...calcCandidateKeys].filter(key => calculatorSourceMatches().some(match => calculatorMatchKey(match) === key)).length;
+}
+function toggleCalculatorCandidate(key){
+  key = String(key);
+  if (calcCandidateKeys.has(key)) {
+    calcCandidateKeys.delete(key);
+    calcSelections.delete(key);
+  } else {
+    calcCandidateKeys.add(key);
+  }
+  renderCalculator();
+}
 function toggleCalculatorSelection(key, idx){
   key = String(key);
   const current = new Set(calculatorSelectionsFor(key));
   if (current.has(idx)) current.delete(idx);
   else current.add(idx);
   const next = [...current].sort((a, b) => a - b);
-  if (next.length) calcSelections.set(key, next);
+  if (next.length) {
+    calcCandidateKeys.add(key);
+    calcSelections.set(key, next);
+  }
   else calcSelections.delete(key);
   renderCalculator();
 }
 function clearCalculatorSelections(){
   calcSelections.clear();
+  calcCandidateKeys.clear();
   renderCalculator();
 }
 function selectCalculatorPredictions(){
   calcSelections.clear();
+  if (!calcCandidateKeys.size) {
+    renderCalculator();
+    setCalculatorStatus('请先在列表里点“纳入”选定几场，再按预测选择；也可以直接点赔率手动选择。');
+    return;
+  }
+  let selected = 0;
   for (const match of calculatorSourceMatches()) {
-    calcSelections.set(calculatorMatchKey(match), [pickIndex(match)]);
+    const key = calculatorMatchKey(match);
+    if (!calcCandidateKeys.has(key)) continue;
+    calcSelections.set(key, [pickIndex(match)]);
+    selected++;
   }
   renderCalculator();
+  if (!selected) setCalculatorStatus('当前候选场次已经不在最新计算器数据里，请重新纳入。');
 }
 function calcCombinations(items, size){
   if (size <= 0) return [[]];
@@ -1088,7 +1118,7 @@ function calculateSportteryBonus(){
   const stake = betCount * 2 * times;
   const profit = maxPayout - stake;
   const breakEven = maxPayout > 0 ? (stake / maxPayout) * 100 : 0;
-  return {times, passType, passSize, selectedCount: legs.length, eligibleCount: eligible.length, betCount, stake, minPayout, maxPayout, profit, breakEven};
+  return {times, passType, passSize, candidateCount: calculatorCandidateCount(), selectedCount: legs.length, eligibleCount: eligible.length, betCount, stake, minPayout, maxPayout, profit, breakEven};
 }
 function cartesianOdds(legs){
   const result = [];
@@ -1246,6 +1276,7 @@ async function syncSimBetsToCalculator(){
   if (!calcMatches.length) await loadSportteryCalculator({refresh:true});
   const pending = (simAccount.bets || []).filter(bet => !['已中', '未中', '已取消'].includes(bet.status));
   calcSelections.clear();
+  calcCandidateKeys.clear();
   let synced = 0;
   for (const bet of pending) {
     const entries = bet.type === 'parlay' && Array.isArray(bet.legs) ? bet.legs : [bet];
@@ -1256,6 +1287,7 @@ async function syncSimBetsToCalculator(){
       const key = calculatorMatchKey(match);
       const current = new Set(calculatorSelectionsFor(key));
       current.add(idx);
+      calcCandidateKeys.add(key);
       calcSelections.set(key, [...current].sort((a, b) => a - b));
       synced++;
     }
@@ -1271,7 +1303,7 @@ function renderCalculatorSummary(calc){
     ? `${formatCalcMoney(calc.minPayout)} - ${formatCalcMoney(calc.maxPayout)}`
     : formatCalcMoney(calc.maxPayout);
   el.innerHTML = `
-    <div class="sim-metric"><span>已选场次</span><b>${calc.selectedCount}</b></div>
+    <div class="sim-metric"><span>候选 / 已选</span><b>${calc.candidateCount} / ${calc.selectedCount}</b></div>
     <div class="sim-metric"><span>注数</span><b>${calc.betCount}</b></div>
     <div class="sim-metric"><span>投入</span><b>${formatCalcMoney(calc.stake)}</b></div>
     <div class="sim-metric"><span>返奖区间</span><b>${payoutText}</b></div>
@@ -1305,9 +1337,11 @@ function renderCalculator(){
   list.innerHTML = source.map(match => {
     const key = calculatorMatchKey(match);
     const selected = new Set(calculatorSelectionsFor(key));
+    const included = calcCandidateKeys.has(key);
     const keyArg = JSON.stringify(key);
     const support = `${match.supportsSingle === false ? '不支持单关' : '支持单关'} · ${match.supportsAllUp === false ? '不支持串关' : '支持串关'}`;
     return `<div class="calc-match">
+      <button type="button" class="calc-include ${included ? 'active' : ''}" onclick='toggleCalculatorCandidate(${keyArg})'>${included ? '已纳入' : '纳入'}</button>
       <div class="calc-match-title">
         <b>${escapeHtml(match.matchNo ? `${match.matchNo} · ` : '')}${escapeHtml(match.home)} vs ${escapeHtml(match.away)}</b>
         <span>${escapeHtml(match.time)} · ${escapeHtml(marketLabel(match))}${match.oddsUpdateTime ? ` · ${escapeHtml(match.oddsUpdateTime)}` : ''}</span>
@@ -1343,6 +1377,7 @@ async function loadSportteryCalculator(options={}){
     };
     const validKeys = new Set(calcMatches.map(calculatorMatchKey));
     calcSelections = new Map([...calcSelections.entries()].filter(([key]) => validKeys.has(String(key))));
+    calcCandidateKeys = new Set([...calcCandidateKeys].filter(key => validKeys.has(String(key))));
   } catch (err) {
     errorMessage = err.message || '请求失败';
     if (!calcMatches.length) calcMatches = [];
