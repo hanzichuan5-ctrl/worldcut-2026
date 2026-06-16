@@ -699,6 +699,13 @@ function marketLabel(match){
   const suffix = match.goalLine ? `(${match.goalLine})` : '';
   return `${marketName}${suffix}`;
 }
+function betPlayLabel(bet){
+  if (bet.sportteryPlay) return bet.passType ? `${bet.sportteryPlay} · ${bet.passType}` : bet.sportteryPlay;
+  const marketName = bet.marketName || (bet.marketCode === 'HHAD' ? '让球胜平负' : '胜平负');
+  const suffix = bet.goalLine ? `(${bet.goalLine})` : '';
+  const passType = bet.passType || (bet.type === 'parlay' ? bet.pick : '单关');
+  return `${marketName}${suffix}${passType ? ` · ${passType}` : ''}`;
+}
 function oddsLabel(odds){
   if (odds === null || odds === undefined) return '-';
   return odds > 0 ? `+${odds}` : String(odds);
@@ -955,7 +962,8 @@ async function refreshSportteryOdds(){
   }
 }
 function calculatorMatchKey(match){
-  return String(match?.matchId || match?.id || `${match?.home || ''}-${match?.away || ''}-${match?.time || ''}`);
+  const base = String(match?.matchId || match?.id || `${match?.home || ''}-${match?.away || ''}-${match?.time || ''}`);
+  return `${base}:${match?.marketCode || 'HAD'}:${match?.goalLine || ''}`;
 }
 function calculatorSourceMatches(){
   if (calcMatches.length) return calcMatches;
@@ -1477,14 +1485,15 @@ function simulateMatch(match){
   const profit = stake * (decimalOdds - 1);
   return { idx, prob, decimalOdds, edge, stakePct, stake, profit };
 }
-function matchById(id){
-  return matches.find(match => String(match.id) === String(id));
+function matchById(id, extraMatches=[]){
+  return [...extraMatches, ...matches].find(match => String(match.id) === String(id));
 }
 function pendingMatches(){
   return matches.filter(match => !match.finished);
 }
 function decimalForPick(match, pick){
   const idx = pick === '主胜' ? 0 : pick === '平局' ? 1 : 2;
+  if (match.oddsDecimal?.[idx]) return Number(match.oddsDecimal[idx]);
   return americanToDecimal(match.odds[idx]);
 }
 function oddsSignature(){
@@ -1501,7 +1510,7 @@ async function llmAutoPlaceBets(options={}){
     btn.disabled = true;
     btn.textContent = 'LLM 决策中...';
   }
-  if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>LLM 正在基于体彩赔率生成模拟下注计划...';
+  if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>LLM 正在基于体彩计算器玩法生成模拟下注计划...';
   try {
     const res = await fetch('/api/auto-bet', {
       method: 'POST',
@@ -1509,6 +1518,7 @@ async function llmAutoPlaceBets(options={}){
       body: JSON.stringify({
         matches: pendingMatches(),
         manual: !!options.manual,
+        prefer_calculator: true,
         settings: {
           bankroll: simAccount.initial,
           cash: simAccount.cash,
@@ -1533,9 +1543,10 @@ async function llmAutoPlaceBets(options={}){
 }
 function applyLlmBetPlan(plan, options={}){
   const existing = new Set(simAccount.bets.map(bet => bet.key));
+  const sourceMatches = Array.isArray(plan.source_matches) ? plan.source_matches : [];
   let placed = 0;
   for (const item of plan.bets || []) {
-    const match = matchById(item.id);
+    const match = matchById(item.id, sourceMatches);
     if (!match || !['主胜','平局','客胜'].includes(item.pick)) continue;
     const key = betKeyForPick(match, item.pick);
     if (existing.has(key)) continue;
@@ -1551,6 +1562,8 @@ function applyLlmBetPlan(plan, options={}){
       marketCode: match.marketCode || 'HAD',
       marketName: match.marketName || '胜平负',
       goalLine: match.goalLine || '',
+      sportteryPlay: item.sporttery_play || marketLabel(match),
+      passType: item.pass_type || '单关',
       odds: Number(decimalOdds.toFixed(2)),
       edge: Number(item.edge_pct || 0),
       probability: Number(item.probability || 0),
@@ -1569,7 +1582,7 @@ function applyLlmBetPlan(plan, options={}){
     const stake = Math.min(Math.round(Number(parlay.stake || 0)), Math.floor(simAccount.cash));
     if (stake <= 0 || !Array.isArray(parlay.legs) || parlay.legs.length < 2) continue;
     const legs = parlay.legs.map(leg => {
-      const match = matchById(leg.id);
+      const match = matchById(leg.id, sourceMatches);
       if (!match || !['主胜','平局','客胜'].includes(leg.pick)) return null;
       const odds = Number(leg.odds || decimalForPick(match, leg.pick));
       return {
@@ -1594,6 +1607,8 @@ function applyLlmBetPlan(plan, options={}){
       match: legs.map(leg => `${leg.match} ${leg.pick}`).join(' × '),
       legs,
       pick: parlay.type || `${parlay.legs.length}串1`,
+      sportteryPlay: parlay.sporttery_play || '混合过关',
+      passType: parlay.pass_type || parlay.type || `${parlay.legs.length}串1`,
       odds: Number(combinedOdds.toFixed(2)),
       stake,
       potentialProfit: Math.round(stake * (combinedOdds - 1)),
@@ -1621,10 +1636,13 @@ function recordLlmBetPlan(plan, placed, manual=false){
     summary: plan.summary || '',
     planMode: plan.mode || '',
     model: plan.model || '',
+    oddsSource: plan.odds_source || '',
     placed,
     bets: (plan.bets || []).map(bet => ({
       id: bet.id,
       pick: bet.pick,
+      sporttery_play: bet.sporttery_play,
+      pass_type: bet.pass_type,
       stake: bet.stake,
       edge_pct: bet.edge_pct,
       reason: bet.reason
@@ -1688,15 +1706,15 @@ function renderLlmHistory(){
   const historyHtml = llmBetHistory.slice(0, 10).map(item => `
     <div class="llm-history-item">
       <b>${escapeHtml(item.time)} · ${escapeHtml(item.mode)} · 新增 ${Number(item.placed || 0)} 单</b>
-      <div>${escapeHtml(item.summary || '无摘要')}${item.planMode ? ` · 模式 ${escapeHtml(item.planMode)}` : ''}${item.model ? ` · ${escapeHtml(item.model)}` : ''}</div>
-      <div>${escapeHtml((item.bets || []).slice(0, 5).map(bet => `${bet.id} ${bet.pick} ${bet.stake || 0}，优势 ${bet.edge_pct || 0}%`).join('；') || '无下注')}</div>
-      <div>${escapeHtml((item.parlays || []).slice(0, 3).map(parlay => `${parlay.type} ${parlay.stake || 0}，赔率 ${parlay.combined_odds || '-'}`).join('；'))}</div>
-      <div>${escapeHtml((item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.pick}：${decision.reason || '无理由'}`).join('；'))}</div>
+      <div>${escapeHtml(item.summary || '无摘要')}${item.planMode ? ` · 模式 ${escapeHtml(item.planMode)}` : ''}${item.oddsSource ? ` · 数据 ${escapeHtml(item.oddsSource)}` : ''}${item.model ? ` · ${escapeHtml(item.model)}` : ''}</div>
+      <div>${escapeHtml((item.bets || []).slice(0, 5).map(bet => `${bet.id} ${bet.sporttery_play || ''} ${bet.pass_type || ''} ${bet.pick} ${bet.stake || 0}，优势 ${bet.edge_pct || 0}%`).join('；') || '无下注')}</div>
+      <div>${escapeHtml((item.parlays || []).slice(0, 3).map(parlay => `${parlay.sporttery_play || parlay.type} ${parlay.pass_type || parlay.type} ${parlay.stake || 0}，赔率 ${parlay.combined_odds || '-'}`).join('；'))}</div>
+      <div>${escapeHtml((item.decisions || []).slice(0, 6).map(decision => `${decision.id} ${decision.sporttery_play || ''} ${decision.pass_type || ''} ${decision.pick}：${decision.reason || '无理由'}`).join('；'))}</div>
     </div>`).join('');
   const workerHtml = workerLog.slice(0, 5).map(item => `
     <div class="llm-history-item">
       <b>${escapeHtml(item.time || '')} · 后台任务 · 下注 ${Number(item.placed || 0)} / 结算 ${Number(item.settled || 0)}</b>
-      <div>赔率：${escapeHtml(item.odds_status || '-')}，场次 ${Number(item.odds_count || 0)}，新增复盘 ${Number(item.reviews_added || 0)}</div>
+      <div>赔率：${escapeHtml(item.odds_status || '-')}，来源 ${escapeHtml(item.odds_source || '-')}，场次 ${Number(item.odds_count || 0)}，新增复盘 ${Number(item.reviews_added || 0)}</div>
       <div>${escapeHtml(item.summary || item.error || '本轮无新增动作')}</div>
     </div>`).join('');
   panel.innerHTML = historyHtml + workerHtml;
@@ -1756,7 +1774,7 @@ function renderLedger(){
       return `
       <div class="sim-ledger-row">
         <span><b>${escapeHtml(bet.match)}</b><br>${escapeHtml(bet.placedAt)}</span>
-        <span>${escapeHtml(bet.pick)} · ${escapeHtml(bet.odds)}${bet.agent ? `<br>${escapeHtml(bet.agent)}` : ''}</span>
+        <span>${escapeHtml(bet.pick)} · ${escapeHtml(bet.odds)}<br>${escapeHtml(betPlayLabel(bet))}${bet.agent ? `<br>${escapeHtml(bet.agent)}` : ''}</span>
         <span>${profitText}</span>
         <span>${escapeHtml(bet.status)}${resultText}${bet.reason ? `<br>${escapeHtml(bet.reason)}` : ''}</span>
       </div>`;
@@ -1783,19 +1801,20 @@ function renderSimulation(){
       totalStake += Number(llmBet.stake || 0);
       totalProfit += Number(llmBet.potentialProfit || 0);
       count++;
-      el.innerHTML = `<b>LLM 持仓：</b>${escapeHtml(llmBet.pick)}，赔率 ${escapeHtml(llmBet.odds)}，下注 ${Number(llmBet.stake || 0)}，潜在盈利 ${Number(llmBet.potentialProfit || 0)}。${escapeHtml(llmBet.reason || '')}`;
+      el.innerHTML = `<b>LLM 持仓：</b>${escapeHtml(betPlayLabel(llmBet))} ${escapeHtml(llmBet.pick)}，赔率 ${escapeHtml(llmBet.odds)}，下注 ${Number(llmBet.stake || 0)}，潜在盈利 ${Number(llmBet.potentialProfit || 0)}。${escapeHtml(llmBet.reason || '')}`;
       continue;
     }
     const parlayBet = parlayByMatch.get(String(match.id));
     if (parlayBet) {
-      el.innerHTML = `<b>LLM 串关：</b>参与 ${escapeHtml(parlayBet.pick)}，合成赔率 ${escapeHtml(parlayBet.odds)}，本单下注 ${Number(parlayBet.stake || 0)}。${escapeHtml(parlayBet.reason || '')}`;
+      el.innerHTML = `<b>LLM 串关：</b>参与 ${escapeHtml(betPlayLabel(parlayBet))}，合成赔率 ${escapeHtml(parlayBet.odds)}，本单下注 ${Number(parlayBet.stake || 0)}。${escapeHtml(parlayBet.reason || '')}`;
       continue;
     }
     const decision = latestDecisions.get(String(match.id));
     if (decision) {
       const prob = Number(decision.probability || 0);
       const probText = prob > 0 && prob <= 1 ? `${Math.round(prob * 100)}%` : `${prob || 0}%`;
-      el.innerHTML = `<b>LLM 决策：</b>未下注。倾向 ${escapeHtml(decision.pick || '跳过')}，概率 ${escapeHtml(probText)}，风险 ${escapeHtml(decision.risk || '中')}。${escapeHtml(decision.reason || '')}`;
+      const play = decision.sporttery_play ? `${decision.sporttery_play} ${decision.pass_type || ''} ` : '';
+      el.innerHTML = `<b>LLM 决策：</b>未下注。倾向 ${escapeHtml(play)}${escapeHtml(decision.pick || '跳过')}，概率 ${escapeHtml(probText)}，风险 ${escapeHtml(decision.risk || '中')}。${escapeHtml(decision.reason || '')}`;
     } else {
       el.innerHTML = '<b>LLM 决策：</b>等待生成。';
     }
