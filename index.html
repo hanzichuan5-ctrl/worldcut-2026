@@ -147,6 +147,19 @@
     .calc-actions .primary { background: var(--accent); color: #fff; border-color: transparent; }
     .calc-status { margin-top: 10px; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 10px 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
     .calc-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+    .calc-ticket-panel { display: none; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; overflow: hidden; }
+    .calc-ticket-panel.show { display: block; }
+    .calc-ticket-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 10px 12px; background: #fbf8ef; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .calc-ticket-head b { display: block; color: var(--ink); font-size: 14px; }
+    .calc-ticket-list { display: grid; gap: 0; }
+    .calc-ticket { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+    .calc-ticket:first-child { border-top: 0; }
+    .calc-ticket-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .calc-ticket-meta b { color: var(--ink); font-size: 14px; }
+    .calc-ticket-legs { display: grid; gap: 6px; }
+    .calc-ticket-leg { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fffaf0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .calc-ticket-leg b { color: var(--ink); font-size: 13px; }
+    .calc-ticket-empty { padding: 14px 12px; color: var(--muted); font-size: 13px; line-height: 1.5; }
     .calc-list { display: grid; gap: 8px; margin-top: 10px; }
     .calc-match { display: grid; gap: 8px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
     .calc-match-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
@@ -217,8 +230,9 @@
       h1 { font-size: clamp(28px, 8vw, 40px); line-height: 1.08; white-space: normal; }
       .hero p { font-size: 14px; line-height: 1.5; }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .grid, .rules, .rules-body, .rule-grid, .sim-controls, .sim-summary, .sim-account, .calc-controls, .calc-summary, .calc-match, .calc-market { grid-template-columns: 1fr; }
+      .grid, .rules, .rules-body, .rule-grid, .sim-controls, .sim-summary, .sim-account, .calc-controls, .calc-summary, .calc-match, .calc-market, .calc-ticket-leg { grid-template-columns: 1fr; }
       .calc-match-head { flex-direction: column; }
+      .calc-ticket-head, .calc-ticket-meta { flex-direction: column; align-items: flex-start; }
       .stat { padding: 12px 13px; }
       .toolbar { align-items: flex-start; flex-direction: column; }
       .controls, #filters { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
@@ -363,9 +377,10 @@
         <div class="calc-body">
           <div class="calc-controls">
             <div class="calc-control"><label for="calcTimes">倍数</label><input id="calcTimes" type="number" min="1" step="1" value="1"></div>
-            <div class="calc-control"><label for="calcPassType">过关方式</label><select id="calcPassType"></select></div>
+            <div class="calc-control"><label for="calcPassType">过几关</label><select id="calcPassType"></select></div>
             <div class="calc-actions">
               <button type="button" class="primary" onclick="selectCalculatorPredictions()">按预测选择</button>
+              <button type="button" onclick="renderCalculatorTickets({manual:true})">模拟出票</button>
               <button type="button" onclick="addCalculatorSelectionsToSim()">写入模拟盘</button>
               <button type="button" onclick="clearCalculatorSelections()">清空</button>
             </div>
@@ -376,6 +391,10 @@
           </div>
           <div class="calc-status" id="calcStatus"><b>数据源：</b>等待读取官方足球胜平负计算器。</div>
           <div class="calc-summary" id="calcSummary"></div>
+          <div class="calc-ticket-panel" id="calcTicketPanel">
+            <div class="calc-ticket-head" id="calcTicketHead"></div>
+            <div class="calc-ticket-list" id="calcTicketList"></div>
+          </div>
           <div class="calc-list" id="calcList"></div>
         </div>
       </section>
@@ -1167,11 +1186,37 @@ function selectedCalculatorLegs(){
   }
   return legs;
 }
+function candidateCalculatorLegs(){
+  const byKey = new Map(calculatorSourceMatches().map(match => [calculatorMatchKey(match), match]));
+  const legs = [];
+  const seenFixtures = new Set();
+  for (const key of calcCandidateKeys) {
+    const match = byKey.get(String(key));
+    if (!match) continue;
+    const fixtureKey = calculatorFixtureKey(match);
+    if (seenFixtures.has(fixtureKey)) continue;
+    seenFixtures.add(fixtureKey);
+    legs.push({
+      key: calculatorMatchKey(match),
+      fixtureKey,
+      match,
+      odds: [],
+      supportsSingle: match.supportsSingle !== false,
+      supportsAllUp: match.supportsAllUp !== false
+    });
+  }
+  return legs;
+}
+function calculatorPassOptionLegs(selectedLegs){
+  const candidateLegs = candidateCalculatorLegs();
+  return candidateLegs.length > selectedLegs.length ? candidateLegs : selectedLegs;
+}
 function updateCalculatorPassOptions(legs){
   const select = document.getElementById('calcPassType');
   if (!select) return 'single';
   const current = select.value || 'single';
-  const maxPass = Math.min(8, legs.filter(leg => leg.supportsAllUp).length);
+  const optionLegs = calculatorPassOptionLegs(legs);
+  const maxPass = Math.min(8, optionLegs.filter(leg => leg.supportsAllUp).length);
   const options = [{value: 'single', label: '单关'}];
   for (let i = 2; i <= maxPass; i++) options.push({value: `${i}x1`, label: `${i}串1`});
   select.innerHTML = options.map(option => `<option value="${option.value}">${option.label}</option>`).join('');
@@ -1222,6 +1267,86 @@ function cartesianOdds(legs){
   };
   walk(0, []);
   return result;
+}
+function calculatorTicketLeg(entry){
+  const match = entry.leg.match;
+  const odd = entry.odd;
+  return {
+    matchNo: match.matchNo || '',
+    match: `${match.home} vs ${match.away}`,
+    market: marketLabel(match),
+    pick: odd.label,
+    odds: Number(odd.odds || 0)
+  };
+}
+function buildCalculatorTicket(entryList, calc, index){
+  const legs = entryList.map(calculatorTicketLeg);
+  const combinedOdds = legs.reduce((acc, leg) => acc * Number(leg.odds || 1), 1);
+  const payout = calcLimitedPayout(combinedOdds, calc.passSize, calc.times);
+  const stake = 2 * calc.times;
+  return {
+    index,
+    passType: denormalizeCalculatorPassType(calc.passType),
+    times: calc.times,
+    stake,
+    combinedOdds: Number(combinedOdds.toFixed(2)),
+    payout,
+    profit: Number((payout - stake).toFixed(2)),
+    legs
+  };
+}
+function buildCalculatorTickets(limit=120){
+  const calc = calculateSportteryBonus();
+  const legs = selectedCalculatorLegs();
+  const tickets = [];
+  if (!legs.length || !calc.betCount) {
+    const candidateCount = calculatorCandidateCount();
+    const needed = calc.passType === 'single' ? 1 : calc.passSize;
+    const message = candidateCount
+      ? `已纳入 ${candidateCount} 场，${denormalizeCalculatorPassType(calc.passType)} 至少需要 ${needed} 场已选结果；请点“按预测选择”或手动点赔率后再模拟出票。`
+      : '当前没有可出票的选择。';
+    return {calc, legs, tickets, omitted: 0, message};
+  }
+  const pushTicket = entries => {
+    if (tickets.length >= limit) return;
+    tickets.push(buildCalculatorTicket(entries, calc, tickets.length + 1));
+  };
+  if (calc.passType === 'single') {
+    for (const leg of legs.filter(item => item.supportsSingle)) {
+      for (const odd of leg.odds) pushTicket([{leg, odd}]);
+    }
+  } else {
+    const eligible = legs.filter(leg => leg.supportsAllUp);
+    const combos = calcCombinations(eligible, calc.passSize);
+    for (const combo of combos) {
+      for (const pickCombo of cartesianOdds(combo)) pushTicket(pickCombo);
+    }
+  }
+  return {calc, legs, tickets, omitted: Math.max(0, calc.betCount - tickets.length), message: ''};
+}
+function renderCalculatorTickets(options={}){
+  const panel = document.getElementById('calcTicketPanel');
+  const head = document.getElementById('calcTicketHead');
+  const list = document.getElementById('calcTicketList');
+  if (!panel || !head || !list) return;
+  if (!options.manual && !panel.classList.contains('show')) return;
+  panel.classList.add('show');
+  const {calc, tickets, omitted, message} = buildCalculatorTickets(120);
+  head.innerHTML = `<div><b>模拟出票</b><span>${escapeHtml(denormalizeCalculatorPassType(calc.passType))} · ${calc.times} 倍 · ${calc.betCount} 注 · 投入 ${formatCalcMoney(calc.stake)}</span></div><div>返奖区间 ${formatCalcMoney(calc.minPayout)} - ${formatCalcMoney(calc.maxPayout)}</div>`;
+  if (message || !tickets.length) {
+    list.innerHTML = `<div class="calc-ticket-empty">${escapeHtml(message || '当前没有可出票的选择。')}</div>`;
+    return;
+  }
+  list.innerHTML = tickets.map(ticket => `
+    <div class="calc-ticket">
+      <div class="calc-ticket-meta">
+        <b>票 ${String(ticket.index).padStart(3, '0')} · ${escapeHtml(ticket.passType)} · ${ticket.times}倍</b>
+        <span>投入 ${formatCalcMoney(ticket.stake)} · 合成赔率 ${escapeHtml(ticket.combinedOdds)} · 预计返奖 ${formatCalcMoney(ticket.payout)} · 盈利 ${formatCalcMoney(ticket.profit)}</span>
+      </div>
+      <div class="calc-ticket-legs">
+        ${ticket.legs.map(leg => `<div class="calc-ticket-leg"><span><b>${escapeHtml(leg.matchNo ? `${leg.matchNo} · ` : '')}${escapeHtml(leg.match)}</b><br>${escapeHtml(leg.market)} · ${escapeHtml(leg.pick)}</span><span>${Number(leg.odds || 0).toFixed(2)}</span></div>`).join('')}
+      </div>
+    </div>`).join('') + (omitted ? `<div class="calc-ticket-empty">还有 ${omitted} 张票未展开，请减少选择或降低过关组合。</div>` : '');
 }
 function simLegFromCalculator(entry){
   const match = entry.leg.match;
@@ -1487,6 +1612,7 @@ function renderCalculator(){
   renderCalculatorSummary(calc);
   if (!source.length) {
     list.innerHTML = '<div class="calc-empty">暂无可计算的体彩胜平负数据。可以先点击“刷新官网数据”，或等待赔率接口返回。</div>';
+    renderCalculatorTickets();
     return;
   }
   if (status && calcMatches.length) {
@@ -1534,6 +1660,7 @@ function renderCalculator(){
       }).join('')}
     </div>`;
   }).join('');
+  renderCalculatorTickets();
 }
 async function loadSportteryCalculator(options={}){
   if (calcRefreshRunning && !options.manual) return;
