@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import ipaddress
 import re
@@ -68,13 +67,6 @@ SIM_SAVE_RATE_LIMIT_SECONDS = max(10, int(os.getenv("SIM_SAVE_RATE_LIMIT_SECONDS
 SIM_SETTLE_RATE_LIMIT_SECONDS = max(10, int(os.getenv("SIM_SETTLE_RATE_LIMIT_SECONDS", "60")))
 ODDS_REFRESH_SECONDS = max(30, int(os.getenv("ODDS_REFRESH_SECONDS", "120")))
 RESULTS_REFRESH_SECONDS = max(60, int(os.getenv("RESULTS_REFRESH_SECONDS", "300")))
-FORECAST_TEMPERATURE = 1.08
-FORECAST_DRAW_BOOST = 0.03
-FORECAST_MAX_GOALS = 8
-FORECAST_LAMBDAS = [round(0.25 + idx * 0.05, 2) for idx in range(72)]
-FORECAST_FIT_CACHE: dict[tuple[float, float, float], tuple[float, float]] = {}
-POISSON_PMF_CACHE: dict[tuple[float, int], list[float]] = {}
-POISSON_1X2_CACHE: dict[tuple[float, float, int], list[float]] = {}
 TEAM_EN = {
     "墨西哥": "Mexico",
     "南非": "South Africa",
@@ -1267,136 +1259,6 @@ def probs_from_decimal(decimal_odds: list[float]) -> list[int]:
     return [round((value / total) * 100) for value in implied]
 
 
-def market_probs_from_decimal(decimal_odds: list[float]) -> list[float]:
-    implied = [1 / float(value) for value in decimal_odds if value and float(value) > 1]
-    if len(implied) != 3:
-        return [0.34, 0.33, 0.33]
-    total = sum(implied) or 1.0
-    return [value / total for value in implied]
-
-
-def calibrate_forecast_probs(probs: list[float], temperature: float = FORECAST_TEMPERATURE, draw_boost: float = FORECAST_DRAW_BOOST) -> list[float]:
-    values = [max(float(value or 0), 1e-12) for value in (probs or [])[:3]]
-    while len(values) < 3:
-        values.append(1e-12)
-    scaled = [value ** (1.0 / temperature) for value in values]
-    total = sum(scaled) or 1.0
-    scaled = [value / total for value in scaled]
-    scaled[1] += draw_boost
-    total = sum(scaled) or 1.0
-    return [value / total for value in scaled]
-
-
-def poisson_pmf(lam: float, max_goals: int = FORECAST_MAX_GOALS) -> list[float]:
-    key = (round(float(lam), 3), max_goals)
-    cached = POISSON_PMF_CACHE.get(key)
-    if cached:
-        return cached
-    first = math.exp(-key[0])
-    probs = [first]
-    for goals in range(1, max_goals + 1):
-        probs.append(probs[-1] * key[0] / goals)
-    POISSON_PMF_CACHE[key] = probs
-    return probs
-
-
-def poisson_1x2_probs(lam_home: float, lam_away: float, max_goals: int = FORECAST_MAX_GOALS) -> list[float]:
-    key = (round(float(lam_home), 3), round(float(lam_away), 3), max_goals)
-    cached = POISSON_1X2_CACHE.get(key)
-    if cached:
-        return cached
-    home_pmf = poisson_pmf(lam_home, max_goals)
-    away_pmf = poisson_pmf(lam_away, max_goals)
-    result = [0.0, 0.0, 0.0]
-    for home_goals, home_prob in enumerate(home_pmf):
-        for away_goals, away_prob in enumerate(away_pmf):
-            prob = home_prob * away_prob
-            if home_goals > away_goals:
-                result[0] += prob
-            elif home_goals == away_goals:
-                result[1] += prob
-            else:
-                result[2] += prob
-    total = sum(result) or 1.0
-    result = [value / total for value in result]
-    POISSON_1X2_CACHE[key] = result
-    return result
-
-
-def poisson_score_grid(lam_home: float, lam_away: float, max_goals: int = FORECAST_MAX_GOALS) -> tuple[list[float], list[dict]]:
-    home_pmf = poisson_pmf(lam_home, max_goals)
-    away_pmf = poisson_pmf(lam_away, max_goals)
-    result = [0.0, 0.0, 0.0]
-    scores = []
-    for home_goals, home_prob in enumerate(home_pmf):
-        for away_goals, away_prob in enumerate(away_pmf):
-            prob = home_prob * away_prob
-            if home_goals > away_goals:
-                result[0] += prob
-            elif home_goals == away_goals:
-                result[1] += prob
-            else:
-                result[2] += prob
-            scores.append({"score": f"{home_goals}-{away_goals}", "probability": prob})
-    total = sum(result) or 1.0
-    result = [value / total for value in result]
-    score_total = sum(item["probability"] for item in scores) or 1.0
-    scores = sorted(
-        ({"score": item["score"], "probability": item["probability"] / score_total} for item in scores),
-        key=lambda item: item["probability"],
-        reverse=True,
-    )
-    return result, scores
-
-
-def fit_poisson_lambdas(target_probs: list[float]) -> tuple[float, float]:
-    target = calibrate_forecast_probs(target_probs, temperature=1.0, draw_boost=0.0)
-    key = tuple(round(value, 3) for value in target)
-    cached = FORECAST_FIT_CACHE.get(key)
-    if cached:
-        return cached
-    best = (1.25, 1.25)
-    best_loss = float("inf")
-    for lam_home in FORECAST_LAMBDAS:
-        for lam_away in FORECAST_LAMBDAS:
-            model_probs = poisson_1x2_probs(lam_home, lam_away)
-            loss = sum((model_probs[idx] - target[idx]) ** 2 for idx in range(3))
-            loss += 0.0025 * ((lam_home + lam_away - 2.55) ** 2)
-            if loss < best_loss:
-                best_loss = loss
-                best = (lam_home, lam_away)
-    FORECAST_FIT_CACHE[key] = best
-    return best
-
-
-def worldcup_forecast_from_market(home: str, away: str, decimal_odds: list[float]) -> dict:
-    raw_probs = market_probs_from_decimal(decimal_odds)
-    calibrated = calibrate_forecast_probs(raw_probs)
-    lam_home, lam_away = fit_poisson_lambdas(calibrated)
-    poisson_probs, scores = poisson_score_grid(lam_home, lam_away)
-    idx = max(range(3), key=lambda item: calibrated[item])
-    pick = ["主胜", "平局", "客胜"][idx]
-    direction_scores = [item for item in scores if pick_from_score(item["score"]) == pick]
-    top_scores = (direction_scores or scores)[:5]
-    return {
-        "type": "worldcup_forecast_poisson",
-        "source": "odds_calibrated_poisson",
-        "method": "体彩固定奖金去水后，用 Poisson 比分网格拟合 1X2 概率，并套用 temperature=1.08 与 draw_boost=0.03 的校准层。",
-        "home": home,
-        "away": away,
-        "pick": pick,
-        "score": top_scores[0]["score"] if top_scores else score_from_market(pick, probs_from_decimal(decimal_odds)),
-        "probabilities": [round(value * 100, 1) for value in calibrated],
-        "market_probabilities": [round(value * 100, 1) for value in raw_probs],
-        "poisson_probabilities": [round(value * 100, 1) for value in poisson_probs],
-        "expected_goals": [round(lam_home, 2), round(lam_away, 2)],
-        "top_scores": [
-            {"score": item["score"], "probability": round(item["probability"] * 100, 1)}
-            for item in top_scores
-        ],
-    }
-
-
 def draw_assessment_from_probs(probs: list[int], confidence: str = "") -> dict:
     values = [(int(value) if isinstance(value, int) else round(float(value or 0))) for value in (probs or [34, 33, 33])[:3]]
     while len(values) < 3:
@@ -1500,7 +1362,6 @@ def cn_datetime(date_text: str) -> str:
 
 def sporttery_item_to_match(item: dict, idx: int) -> dict:
     decimal = item.get("decimal") or []
-    forecast = worldcup_forecast_from_market(item.get("home", ""), item.get("away", ""), decimal)
     probs = probs_from_decimal(decimal)
     pick, api_pick = pick_from_probs(item.get("home", ""), item.get("away", ""), probs)
     market_code = str(item.get("market_code") or "HAD").upper()
@@ -1527,8 +1388,7 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "score": score_from_market(api_pick, probs),
         "conf": conf_from_prob(max(probs)),
         "probs": probs,
-        "forecast": forecast,
-        "why": f"以中国体育彩票竞彩网当前{market_name}{market_suffix}固定奖金为主数据源，主预测仍按体彩隐含概率和平局触发规则生成；结构模型仅作参考，给出 {forecast.get('pick') or '-'}，参考比分 {forecast.get('score') or '-'}。仍需结合阵容、伤病、裁判和临场新闻复核。",
+        "why": f"以中国体育彩票竞彩网当前{market_name}{market_suffix}固定奖金为主数据源。{api_pick}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。",
     }
 
 
@@ -1675,7 +1535,6 @@ def _build_sporttery_odds_snapshot() -> dict:
     trends = get_odds_trends(matches)
     for item in matches:
         item["trend"] = trends.get(odds_match_key(item), [])
-        item["forecast"] = worldcup_forecast_from_market(item.get("home", ""), item.get("away", ""), item.get("decimal") or [])
     return {
         "source": "中国体育彩票竞彩网",
         "source_url": url,
@@ -2053,18 +1912,8 @@ def collect_match_intelligence(match: dict) -> list[dict]:
     away_cn = match.get("away", "")
     home = TEAM_EN.get(match.get("home", ""), match.get("home", ""))
     away = TEAM_EN.get(match.get("away", ""), match.get("away", ""))
-    forecast = match.get("forecast") or {}
-    if not forecast and match.get("oddsDecimal"):
-        forecast = worldcup_forecast_from_market(home_cn, away_cn, match.get("oddsDecimal") or [])
     collected = [
         draw_assessment_from_probs(match.get("probs") or [], match.get("conf") or ""),
-        {
-            "type": "worldcup_forecast_poisson",
-            "title": "odds-calibrated Poisson structural model",
-            "source": "internal",
-            "forecast": forecast,
-            "note": "使用 Poisson 1X2、temperature calibration 和平局提升；线上版本以体彩固定奖金去水概率作为输入，不引入训练框架依赖。",
-        },
         {
             "type": "official_source",
             "title": "FIFA official match schedule, fixtures and results",
@@ -2484,7 +2333,6 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
             "odds_american": match.get("odds") or [],
             "page_probabilities": match.get("probs") or [],
             "page_pick": match.get("api"),
-            "worldcup_forecast": match.get("forecast") or {},
             "confidence": match.get("conf"),
             "source": match.get("oddsSource"),
         })

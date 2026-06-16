@@ -73,16 +73,6 @@
     .odds-box { background: #fff; border: 1px solid rgba(184,135,30,.35); border-radius: 8px; padding: 9px; }
     .odds-box span { display: block; color: var(--muted); font-size: 12px; }
     .odds-box b { display: block; margin-top: 2px; color: var(--gold); font-size: 19px; }
-    .forecast-box { border-top: 1px solid var(--line); background: #eef4f1; padding: 12px 16px 14px; }
-    .forecast-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-    .forecast-head b { font-size: 13px; }
-    .forecast-head span { color: var(--muted); font-size: 12px; text-align: right; }
-    .forecast-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-    .forecast-metric { background: #fff; border: 1px solid rgba(19,121,91,.2); border-radius: 8px; padding: 9px; min-width: 0; }
-    .forecast-metric span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 3px; }
-    .forecast-metric b { color: var(--ink); font-size: 17px; }
-    .score-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .score-chip { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
     .why { border-top: 1px solid var(--line); padding: 13px 16px 16px; color: var(--muted); line-height: 1.5; font-size: 14px; }
     .ai-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 12px 16px; background: #fffaf0; }
     .ai-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -215,8 +205,6 @@
       .odds-source-actions, .odds-import-actions { display: grid; grid-template-columns: 1fr; }
       .odds-source button, .odds-import-actions button { width: 100%; }
       .trend-grid { grid-template-columns: 1fr; }
-      .forecast-grid { grid-template-columns: 1fr; }
-      .forecast-head { align-items: flex-start; flex-direction: column; }
       .trend-card { display: grid; grid-template-columns: 76px 1fr 54px; align-items: center; gap: 8px; }
       .result-row { grid-template-columns: 1fr; gap: 3px; padding: 10px 15px; }
       .results-pager { align-items: stretch; flex-direction: column; padding: 10px 15px; }
@@ -330,7 +318,7 @@
       <div class="grid" id="cards"></div>
       <section class="sources">
         <h2>来源与方法</h2>
-        <p>赛程、场地、转播时间与盘口线参考 ESPN 的世界杯赛程页面；赛程官方来源参考 FIFA 官方赛程/结果页面；球队实力层级参考 FIFA 男足世界排名页面。结构模型采用 Poisson 比分网格、温度校准和平局提升，线上版本以体彩固定奖金去水概率作为输入。页面采用静态快照，生成时间为 2026-06-10。</p>
+        <p>赛程、场地、转播时间与盘口线参考 ESPN 的世界杯赛程页面；赛程官方来源参考 FIFA 官方赛程/结果页面；球队实力层级参考 FIFA 男足世界排名页面。页面采用静态快照，生成时间为 2026-06-10。</p>
         <p><a href="https://www.espn.com/soccer/schedule/_/league/fifa.world">ESPN 世界杯赛程</a> · <a href="https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles/match-schedule-fixtures-results-teams-stadiums">FIFA 官方赛程</a> · <a href="https://inside.fifa.com/fifa-world-ranking/men">FIFA 男足世界排名</a></p>
       </section>
     </div>
@@ -586,7 +574,6 @@ function refreshDateFilters(){
 }
 function sportteryToMatch(item, idx){
   const decimal = item.decimal || [];
-  const forecast = item.forecast || null;
   const probs = probsFromDecimal(decimal);
   const pick = pickFromProbs(item.home, item.away, probs);
   const marketCode = String(item.market_code || item.marketCode || 'HAD').toUpperCase();
@@ -613,10 +600,7 @@ function sportteryToMatch(item, idx){
     score: scoreFromMarket(pick.api, probs),
     conf: confFromProb(Math.max(...probs)),
     probs,
-    forecast,
-    why: forecast
-      ? `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源，主预测仍按体彩隐含概率和平局触发规则生成；结构模型仅作参考，给出 ${forecast.pick || '-'}，参考比分 ${forecast.score || '-'}。仍需结合阵容、伤病、裁判和临场新闻复核。`
-      : `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
+    why: `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
   };
 }
 function marketLabel(match){
@@ -677,25 +661,6 @@ function renderOddsTrend(match){
           return `<div class="trend-card"><span>${label}</span>${renderSparkline(series, colors[idx])}<div class="trend-now">${current.decimal.toFixed(2)} · ${impliedPercentFromDecimal(current.decimal)}%${deltaText}</div></div>`;
         }).join('')}
       </div>
-    </div>`;
-}
-function renderForecastInsight(match){
-  const forecast = match.forecast;
-  if (!forecast || !Array.isArray(forecast.probabilities)) return '';
-  const probs = forecast.probabilities;
-  const expected = Array.isArray(forecast.expected_goals) ? forecast.expected_goals : [];
-  const labels = [`${match.home}胜`, '平局', `${match.away}胜`];
-  const scores = Array.isArray(forecast.top_scores) ? forecast.top_scores.slice(0, 4) : [];
-  const chips = scores.map(item => `<span class="score-chip">${escapeHtml(item.score)} · ${escapeHtml(item.probability)}%</span>`).join('');
-  return `
-    <div class="forecast-box">
-      <div class="forecast-head"><b>结构模型参考</b><span>Poisson 比分网格 · 温度校准 · 平局提升</span></div>
-      <div class="forecast-grid">
-        <div class="forecast-metric"><span>结构方向</span><b>${escapeHtml(forecast.pick || match.api || '-')} · ${escapeHtml(forecast.score || match.score || '-')}</b></div>
-        <div class="forecast-metric"><span>校准概率</span><b>${labels.map((label, idx) => `${label} ${Number(probs[idx] || 0).toFixed(1)}%`).join(' / ')}</b></div>
-        <div class="forecast-metric"><span>预期进球</span><b>${escapeHtml(match.home)} ${expected[0] ?? '-'} : ${expected[1] ?? '-'} ${escapeHtml(match.away)}</b></div>
-      </div>
-      ${chips ? `<div class="score-chips">${chips}</div>` : ''}
     </div>`;
 }
 function normalizeTeamName(name){
@@ -842,7 +807,6 @@ function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞
       score: market.score,
       conf: market.conf,
       probs: market.probs,
-      forecast: market.forecast,
       why: market.why
     });
     applyDrawPrediction(target);
@@ -1365,7 +1329,6 @@ function render(){
       </div>
       <div class="probs"><div class="prob"><span>${m.home}胜</span><b>${m.probs[0]}%</b></div><div class="prob"><span>平局</span><b>${m.probs[1]}%</b></div><div class="prob"><span>${m.away}胜</span><b>${m.probs[2]}%</b></div></div>
       <div class="odds-row"><div class="odds-box"><span>${m.home}胜赔率</span><b>${decimalOddsLabel(m, 0)}</b></div><div class="odds-box"><span>平局赔率</span><b>${decimalOddsLabel(m, 1)}</b></div><div class="odds-box"><span>${m.away}胜赔率</span><b>${decimalOddsLabel(m, 2)}</b></div></div>
-      ${renderForecastInsight(m)}
       ${renderOddsTrend(m)}
       <div class="sim-line" id="sim-${m.id}">模拟盘计算中...</div>
       <div class="why">${m.why}</div>
