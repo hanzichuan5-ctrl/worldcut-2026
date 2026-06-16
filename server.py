@@ -407,8 +407,7 @@ def get_history(match_id: str | None = None, limit: int = 50) -> list[dict]:
         except json.JSONDecodeError:
             item["sources"] = []
         item["predicted_score"] = extract_predicted_score(analysis) or item.get("static_score", "")
-        pick_text = f"{analysis} {item.get('summary', '')}"
-        item["predicted_pick"] = next((label for label in ("主胜", "平局", "客胜") if label in pick_text), "")
+        item["predicted_pick"] = pick_from_score(item["predicted_score"]) or extract_predicted_pick(f"{analysis} {item.get('summary', '')}")
         result.append(item)
     return result
 
@@ -431,8 +430,7 @@ def get_prediction_matches(limit: int = 5000) -> list[dict]:
         item = dict(row)
         analysis = item.pop("analysis", "") or ""
         item["predicted_score"] = extract_predicted_score(analysis) or item.get("static_score", "")
-        pick_text = f"{analysis} {item.get('summary', '')}"
-        item["predicted_pick"] = next((label for label in ("主胜", "平局", "客胜") if label in pick_text), "")
+        item["predicted_pick"] = pick_from_score(item["predicted_score"]) or extract_predicted_pick(f"{analysis} {item.get('summary', '')}")
         result.append(item)
     return result
 
@@ -1146,6 +1144,31 @@ def normalize_score_text(value: str) -> str:
     if match:
         return f"{int(match.group(1))}-{int(match.group(2))}"
     return text.strip()
+
+
+def pick_from_score(value: str) -> str:
+    score = normalize_score_text(value)
+    match = re.fullmatch(r"(\d{1,2})-(\d{1,2})", score)
+    if not match:
+        return ""
+    home_score, away_score = int(match.group(1)), int(match.group(2))
+    if home_score > away_score:
+        return "主胜"
+    if home_score < away_score:
+        return "客胜"
+    return "平局"
+
+
+def extract_predicted_pick(text: str) -> str:
+    patterns = [
+        r"(?:主胜/平局/客胜|竞猜选项|预测方向|方向)[：:]\s*(主胜|平局|客胜)",
+        r"(?:最终预测|结论|推荐)[^\n：:]*[：:]\s*(主胜|平局|客胜)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text or "")
+        if match:
+            return match.group(1)
+    return ""
 
 
 def strip_tags(value: str) -> str:
@@ -2001,13 +2024,9 @@ def _build_match_results() -> dict:
         score_hit = None
         if pred_match:
             predicted_score = normalize_score_text(pred_match.get("predicted_score") or pred_match.get("static_score", ""))
-            predicted_pick = pred_match.get("predicted_pick") or ""
+            predicted_pick = pick_from_score(predicted_score) or pred_match.get("predicted_pick") or ""
             if not predicted_pick:
-                text = pred_match.get("summary", "").strip()
-                for p, label in [("主胜", "主胜"), ("平局", "平局"), ("客胜", "客胜")]:
-                    if p in text:
-                        predicted_pick = label
-                        break
+                predicted_pick = extract_predicted_pick(pred_match.get("summary", "").strip())
             if predicted_pick:
                 pick_hit = (predicted_pick == r["pick"])
             if predicted_score:
