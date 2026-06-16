@@ -1193,11 +1193,11 @@ def fetch_json_cached(url: str, ttl_seconds: int = 1800) -> dict:
     return data
 
 
-def fetch_json_request_cached(url: str, headers: dict | None = None, ttl_seconds: int = 900, timeout_seconds: int = 25, proxy_url: str = "") -> dict:
+def fetch_json_request_cached(url: str, headers: dict | None = None, ttl_seconds: int = 900, timeout_seconds: int = 25, proxy_url: str = "", force_refresh: bool = False) -> dict:
     cache_id = json.dumps({"url": url, "headers": sorted((headers or {}).items()), "proxy": proxy_url}, sort_keys=True)
     now = datetime.now(timezone.utc).timestamp()
     cached = DATA_CACHE.get(cache_id)
-    if cached and now - cached["ts"] < ttl_seconds:
+    if not force_refresh and cached and now - cached["ts"] < ttl_seconds:
         return cached["data"]
     req = request.Request(url, headers=headers or {"User-Agent": "worldcup-predictions/1.0"})
     opener = request.build_opener(request.ProxyHandler({"http": proxy_url, "https": proxy_url})) if proxy_url else request.build_opener()
@@ -1559,7 +1559,7 @@ def sporttery_fetch_payload() -> tuple[dict | None, str, str]:
     return None, source_url, " | ".join(errors)
 
 
-def sporttery_calculator_fetch_payload() -> tuple[dict | None, str, str]:
+def sporttery_calculator_fetch_payload(force_refresh: bool = False) -> tuple[dict | None, str, str]:
     errors = []
     for url in build_sporttery_calculator_urls():
         try:
@@ -1572,7 +1572,7 @@ def sporttery_calculator_fetch_payload() -> tuple[dict | None, str, str]:
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
-            }, ttl_seconds=60, timeout_seconds=8, proxy_url=SPORTTERY_HTTP_PROXY if use_proxy else "")
+            }, ttl_seconds=15, timeout_seconds=8, proxy_url=SPORTTERY_HTTP_PROXY if use_proxy else "", force_refresh=force_refresh)
             return unwrap_proxy_json(data), url, ""
         except Exception as exc:
             errors.append(f"{url}: {str(exc)[:180]}")
@@ -1621,8 +1621,10 @@ def _build_sporttery_odds_snapshot() -> dict:
     }
 
 
-def _build_sporttery_calculator_snapshot() -> dict:
-    data, url, err = sporttery_calculator_fetch_payload()
+def _build_sporttery_calculator_snapshot(force_refresh: bool = False) -> dict:
+    data, url, err = sporttery_calculator_fetch_payload(force_refresh=force_refresh)
+    value = data.get("value") if isinstance(data, dict) else {}
+    official_last_update = value.get("lastUpdateTime") if isinstance(value, dict) else ""
     if data is None:
         return {
             "source": "中国体育彩票竞彩网足球胜平负计算器",
@@ -1634,6 +1636,8 @@ def _build_sporttery_calculator_snapshot() -> dict:
             "generated_at": beijing_time(),
             "official_page": "https://m.sporttery.cn/mjc/jsq/zqspf/",
             "official_url": SPORTTERY_CALCULATOR_URL,
+            "official_last_update": "",
+            "real_time": force_refresh,
         }
     parsed_matches = parse_sporttery_matches(data)
     finished_results = fetch_worldcup_results()
@@ -1656,6 +1660,8 @@ def _build_sporttery_calculator_snapshot() -> dict:
         "generated_at": beijing_time(),
         "official_page": "https://m.sporttery.cn/mjc/jsq/zqspf/",
         "official_url": SPORTTERY_CALCULATOR_URL,
+        "official_last_update": official_last_update,
+        "real_time": force_refresh,
     }
 
 
@@ -1708,8 +1714,42 @@ def sporttery_odds_snapshot() -> dict:
     return cached_snapshot("odds", _build_sporttery_odds_snapshot, ODDS_REFRESH_SECONDS * 2)
 
 
-def sporttery_calculator_snapshot() -> dict:
-    return cached_snapshot("calculator", _build_sporttery_calculator_snapshot, ODDS_REFRESH_SECONDS * 2)
+def sporttery_calculator_snapshot(force_refresh: bool = False) -> dict:
+    max_age_seconds = 15
+    now = time.monotonic()
+    if not force_refresh:
+        with SNAPSHOT_LOCK:
+            entry = SNAPSHOT_CACHE["calculator"]
+            payload = entry.get("payload")
+            age = now - float(entry.get("ts") or 0)
+            if payload is not None and age < max_age_seconds:
+                result = dict(payload)
+                result["cache_age_seconds"] = round(age, 1)
+                result["cache_stale"] = False
+                if entry.get("error"):
+                    result["cache_error"] = entry["error"]
+                return result
+    try:
+        payload = _build_sporttery_calculator_snapshot(force_refresh=force_refresh)
+        with SNAPSHOT_LOCK:
+            SNAPSHOT_CACHE["calculator"] = {"payload": payload, "ts": time.monotonic(), "error": ""}
+        result = dict(payload)
+        result["cache_age_seconds"] = 0
+        result["cache_stale"] = False
+        return result
+    except Exception as exc:
+        with SNAPSHOT_LOCK:
+            entry = SNAPSHOT_CACHE["calculator"]
+            entry["error"] = str(exc)[:240]
+            payload = entry.get("payload")
+            age = time.monotonic() - float(entry.get("ts") or 0)
+        if payload is not None:
+            result = dict(payload)
+            result["cache_age_seconds"] = round(age, 1)
+            result["cache_stale"] = True
+            result["cache_error"] = str(exc)[:240]
+            return result
+        raise
 
 
 def sporttery_tool(home_cn: str, away_cn: str) -> list[dict]:
@@ -2202,7 +2242,9 @@ class Handler(SimpleHTTPRequestHandler):
             json_response(self, 200, sporttery_odds_snapshot())
             return
         if parsed.path == "/api/sporttery-calculator":
-            json_response(self, 200, sporttery_calculator_snapshot())
+            params = parse.parse_qs(parsed.query)
+            force_refresh = params.get("refresh", ["0"])[0].lower() in {"1", "true", "yes"}
+            json_response(self, 200, sporttery_calculator_snapshot(force_refresh=force_refresh))
             return
         if parsed.path == "/api/history":
             params = parse.parse_qs(parsed.query)
