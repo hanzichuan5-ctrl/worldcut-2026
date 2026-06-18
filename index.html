@@ -342,7 +342,7 @@
             <div class="sim-control"><label for="maxStake">单场上限</label><input id="maxStake" type="number" min="0.5" max="20" step="0.5" value="5"></div>
             <div class="sim-control"><label for="minEdge">最低优势</label><input id="minEdge" type="number" min="-20" max="50" step="1" value="2"></div>
           </div>
-          <div class="odds-source" id="oddsSource"><span><b>赔率源：</b>正在读取中国体育彩票竞彩网固定奖金...</span><div class="odds-source-actions"><button type="button" onclick="refreshSportteryOdds()">刷新体彩赔率</button><button type="button" onclick="toggleOddsImport()">导入体彩 JSON</button></div></div>
+          <div class="odds-source" id="oddsSource"><span><b>赔率源：</b>正在读取 ESPN（DraftKings）赔率...</span><div class="odds-source-actions"><button type="button" onclick="refreshMarketOdds()">刷新赔率</button><button type="button" onclick="toggleOddsImport()">导入赔率 JSON</button></div></div>
           <div class="odds-import" id="oddsImport">
             <textarea id="oddsImportText" placeholder="粘贴竞彩网 getMatchListV1.qry 返回的 JSON，或代理返回的 { contents: '...' } JSON"></textarea>
             <div class="odds-import-actions"><button type="button" onclick="applyImportedOdds()">应用导入</button></div>
@@ -441,6 +441,13 @@
     </div>
   </main>
 <script>
+const API_BASE = location.protocol === 'file:' ? 'http://127.0.0.1:8765' : '';
+if (location.protocol === 'file:') {
+  const warn = document.createElement('div');
+  warn.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#c0392b;color:#fff;padding:10px 16px;font-size:14px;text-align:center;';
+  warn.textContent = '此页面是直接以本地文件方式打开的，浏览器会阻止访问本地服务器接口，数据无法加载。请改为访问 http://127.0.0.1:8765/ 。';
+  document.body.prepend(warn);
+}
 function scheduleMatch(id, dateTime, group, home, away, venue, result=''){
   const [datePart] = String(dateTime).split(' ');
   const dateMatch = datePart.match(/^2026-(\d{2})-(\d{2})$/);
@@ -696,7 +703,7 @@ function refreshDateFilters(){
   dates = ['全部', ...Array.from(new Set(pendingMatches().map(m => m.d)))];
   if (!dates.includes(active)) active = '全部';
 }
-function sportteryToMatch(item, idx){
+function marketOddsToMatch(item, idx, sourceLabel='ESPN（DraftKings）'){
   const decimal = item.decimal || [];
   const probs = probsFromDecimal(decimal);
   const pick = pickFromProbs(item.home, item.away, probs);
@@ -704,6 +711,7 @@ function sportteryToMatch(item, idx){
   const goalLine = String(item.goal_line || item.goalLine || '').trim();
   const marketName = marketCode === 'HHAD' ? '让球胜平负' : '胜平负';
   const marketSuffix = goalLine ? `(${goalLine})` : '';
+  const isSporttery = sourceLabel.includes('体育彩票');
   return {
     id: `tc-${idx + 1}`,
     d: cnDate(item.match_time),
@@ -712,11 +720,11 @@ function sportteryToMatch(item, idx){
     matchId: item.match_id || item.matchId || '',
     home: item.home,
     away: item.away,
-    venue: `${item.league || '世界杯'} · 中国体育彩票`,
+    venue: `${item.league || '世界杯'} · ${sourceLabel}`,
     odds: item.american || decimal.map(decimalToAmerican),
     oddsDecimal: decimal,
     oddsTrend: item.trend || [],
-    oddsSource: `中国体育彩票竞彩网${marketName}固定奖金`,
+    oddsSource: `${sourceLabel}${marketName}${isSporttery ? '固定奖金' : '赔率'}`,
     marketCode,
     marketName,
     goalLine,
@@ -730,7 +738,7 @@ function sportteryToMatch(item, idx){
     score: scoreFromMarket(pick.api, probs),
     conf: confFromProb(Math.max(...probs)),
     probs,
-    why: `以中国体育彩票竞彩网当前${marketName}${marketSuffix}固定奖金为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
+    why: `以${sourceLabel}当前${marketName}${marketSuffix}${isSporttery ? '固定奖金' : '赔率'}为主数据源。${pick.api}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。`
   };
 }
 function marketLabel(match){
@@ -783,11 +791,11 @@ function renderSparkline(values, color){
 function renderOddsTrend(match){
   const labels = [`${match.home}胜`, '平局', `${match.away}胜`];
   const colors = ['#13795b', '#b8871e', '#2366a8'];
-  const isSporttery = String(match.oddsSource || '').includes('中国体育彩票竞彩网');
+  const isRealOdds = String(match.oddsSource || '').includes('ESPN');
   const trendCount = (match.oddsTrend || []).length;
   return `
     <div class="odds-trend">
-      <div class="odds-trend-head"><b>赔率走势</b><span>${isSporttery ? `真实体彩快照：${trendCount || 1} 个点${trendCount <= 1 ? '，暂无变化' : ''}` : '静态兜底：暂无真实历史'}</span></div>
+      <div class="odds-trend-head"><b>赔率走势</b><span>${isRealOdds ? `真实赔率快照：${trendCount || 1} 个点${trendCount <= 1 ? '，暂无变化' : ''}` : '静态兜底：暂无真实历史'}</span></div>
       <div class="trend-grid">
         ${labels.map((label, idx) => {
           const series = oddsTrendSeries(match, idx);
@@ -809,7 +817,7 @@ function normalizeTeamName(name){
   };
   return aliases[text] || text;
 }
-function findSportteryMatch(item){
+function findMarketOddsMatch(item){
   const home = normalizeTeamName(item.home);
   const away = normalizeTeamName(item.away);
   return matches.find(match => {
@@ -913,7 +921,7 @@ function chooseSportteryPool(row){
   }
   return {pool: {}, marketCode: '', goalLine: ''};
 }
-function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞彩网固定奖金'){
+function applyMarketOddsItems(items, statusPrefix='已接入 ESPN（DraftKings）赔率'){
   const valid = (items || []).filter(item => Array.isArray(item.decimal) && item.decimal.length >= 3);
   matches.length = 0;
   staticMatches.forEach(match => matches.push({
@@ -927,9 +935,9 @@ function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞
   }));
   let applied = 0;
   for (const [idx, item] of valid.entries()) {
-    const target = findSportteryMatch(item);
+    const target = findMarketOddsMatch(item);
     if (!target) continue;
-    const market = sportteryToMatch(item, idx);
+    const market = marketOddsToMatch(item, idx);
     Object.assign(target, {
       matchNo: market.matchNo,
       odds: market.odds,
@@ -960,7 +968,7 @@ function applySportteryItems(items, statusPrefix='已接入中国体育彩票竞
   const ignored = valid.length - applied;
   if (source) {
     const ignoredText = ignored > 0 ? `，忽略非赛程/未匹配 ${ignored} 场` : '';
-    source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusPrefix}，保留完整赛程 ${matches.length} 场，已匹配体彩赔率 ${applied} 场${ignoredText}。`;
+    source.querySelector('span').innerHTML = `<b>赔率源：</b>${statusPrefix}，保留完整赛程 ${matches.length} 场，已匹配赔率 ${applied} 场${ignoredText}。`;
   }
   renderFilters();
   render();
@@ -975,29 +983,29 @@ function applyImportedOdds(){
     const raw = document.getElementById('oddsImportText')?.value || '';
     const payload = JSON.parse(raw);
     const items = Array.isArray(payload.matches) ? payload.matches : parseSportteryPayload(payload);
-    const applied = applySportteryItems(items, '已导入体彩固定奖金');
+    const applied = applyMarketOddsItems(items, '已导入赔率 JSON');
     if (!applied && source) source.querySelector('span').innerHTML = '<b>赔率源：</b>已解析导入内容，但没有匹配到当前页面比赛。';
   } catch (err) {
     if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>导入失败：${escapeHtml(err.message)}`;
   }
 }
-async function refreshSportteryOdds(){
+async function refreshMarketOdds(){
   const source = document.getElementById('oddsSource');
-  if (source) source.querySelector('span').innerHTML = '<b>赔率源：</b>正在读取中国体育彩票竞彩网固定奖金...';
+  if (source) source.querySelector('span').innerHTML = '<b>赔率源：</b>正在读取 ESPN（DraftKings）赔率...';
   try {
-    const res = await fetch('/api/odds');
+    const res = await fetch(`${API_BASE}/api/odds`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '请求失败');
     let applied = 0;
-    if (data.status === 'ok') applied = applySportteryItems(data.matches || []);
+    if (data.status === 'ok') applied = applyMarketOddsItems(data.matches || []);
     if (source && data.status !== 'ok') {
       const filteredText = data.filtered_finished_count ? `，已移出已完赛 ${data.filtered_finished_count} 场` : '';
-      const statusText = `体彩源当前不可用：${data.note || data.status || '未知状态'}${filteredText}；可点“导入体彩 JSON”手动导入，页面先使用静态兜底赔率。`;
+      const statusText = `赔率源当前不可用：${data.note || data.status || '未知状态'}${filteredText}；可点"导入赔率 JSON"手动导入，页面先使用静态兜底赔率。`;
       source.querySelector('span').innerHTML = `<b>赔率源：</b>${escapeHtml(statusText)}`;
     }
     if (data.status !== 'ok') render();
   } catch (err) {
-    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>体彩赔率读取失败：${escapeHtml(err.message)}；页面继续使用静态兜底赔率。`;
+    if (source) source.querySelector('span').innerHTML = `<b>赔率源：</b>赔率读取失败：${escapeHtml(err.message)}；页面继续使用静态兜底赔率。`;
   }
 }
 function calculatorMatchKey(match){
@@ -1010,7 +1018,7 @@ function calculatorFixtureKey(match){
 }
 function calculatorSourceMatches(){
   if (calcMatches.length) return calcMatches;
-  return pendingMatches().filter(match => String(match.oddsSource || '').includes('中国体育彩票竞彩网'));
+  return pendingMatches().filter(match => String(match.oddsSource || '').includes('ESPN'));
 }
 function calculatorMatchByKey(key){
   const normalized = String(key);
@@ -1726,11 +1734,11 @@ async function loadSportteryCalculator(options={}){
   let errorMessage = '';
   try {
     const query = options.refresh || options.manual ? '?refresh=1' : '';
-    const res = await fetch(`/api/sporttery-calculator${query}`, {cache:'no-store'});
+    const res = await fetch(`${API_BASE}/api/sporttery-calculator${query}`, {cache:'no-store'});
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '请求失败');
     if (data.status !== 'ok') throw new Error(data.note || data.status || '暂无数据');
-    calcMatches = (data.matches || []).map((item, idx) => sportteryToMatch(item, idx));
+    calcMatches = (data.matches || []).map((item, idx) => marketOddsToMatch(item, idx, data.source || '中国体育彩票竞彩网'));
     calcSourceInfo = {
       source: data.source || '中国体育彩票',
       generatedAt: data.generated_at || '',
@@ -1783,7 +1791,7 @@ function loadSimAccount(){
 }
 async function loadServerSimState(){
   const query = `?account_id=${encodeURIComponent(GLOBAL_SIM_ACCOUNT_ID)}`;
-  const res = await fetch(`/api/sim/account${query}`);
+  const res = await fetch(`${API_BASE}/api/sim/account${query}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || '账户读取失败');
   simAccountId = GLOBAL_SIM_ACCOUNT_ID;
@@ -1805,7 +1813,7 @@ async function loadServerSimState(){
 async function saveSimAccount(options={}){
   if (!simAccountId) return;
   try {
-    await fetch('/api/sim/save', {
+    await fetch(`${API_BASE}/api/sim/save`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
@@ -1912,7 +1920,7 @@ async function llmAutoPlaceBets(options={}){
   }
   if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>LLM 正在基于体彩计算器玩法生成模拟下注计划...';
   try {
-    const res = await fetch('/api/auto-bet', {
+    const res = await fetch(`${API_BASE}/api/auto-bet`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
@@ -2081,7 +2089,7 @@ async function settleSimAccount(){
   const source = document.getElementById('oddsSource');
   if (source) source.querySelector('span').innerHTML = '<b>模拟账户：</b>正在结算已完赛结果...';
   try {
-    const res = await fetch('/api/sim/settle', {
+    const res = await fetch(`${API_BASE}/api/sim/settle`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({account_id: GLOBAL_SIM_ACCOUNT_ID})
@@ -2299,7 +2307,7 @@ function render(){
   const list = active==='全部' ? pendingMatches() : pendingMatches().filter(m=>m.d===active);
   document.getElementById('cards').innerHTML = list.length ? list.map(m=>`
     <article class="card">
-      <div class="card-head"><div><div class="date">北京时间 ${m.time}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${marketLabel(m)} · ${m.api}</div></div><div class="venue">${m.venue}<br>${String(m.oddsSource || '').includes('中国体育彩票竞彩网') ? '体彩固定奖金' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
+      <div class="card-head"><div><div class="date">北京时间 ${m.time}</div><div class="date">${m.matchNo ? `${m.matchNo} · ` : ''}竞猜选项：${marketLabel(m)} · ${m.api}</div></div><div class="venue">${m.venue}<br>${String(m.oddsSource || '').includes('ESPN') ? 'ESPN 实时赔率' : '兜底盘口'} ${m.odds.map(oddsLabel).join(' / ')}</div></div>
       <div class="teams">
         <div class="match"><div class="team"><strong>${m.home}</strong><span>主队</span></div><div class="vs">对阵</div><div class="team" style="text-align:right"><strong>${m.away}</strong><span>客队</span></div></div>
         <div class="pick"><div><h3>预测：${m.pick}</h3><div class="tags"><span class="tag">置信度：${m.conf}</span><span class="tag market">盘口信号</span>${m.api === '平局' ? '<span class="tag draw">平局触发</span>' : ''}<span class="tag risk">阵容待确认</span></div></div><div class="score">${m.score}</div></div>
@@ -2340,7 +2348,7 @@ async function toggleHistory(id, button){
   button.textContent = '收起历史';
   panel.innerHTML = '正在查询历史预测...';
   try {
-    const res = await fetch(`/api/history?match_id=${encodeURIComponent(id)}&limit=5`);
+    const res = await fetch(`${API_BASE}/api/history?match_id=${encodeURIComponent(id)}&limit=5`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '请求失败');
     const rows = data.history || [];
@@ -2360,7 +2368,7 @@ async function toggleHistory(id, button){
 async function runAiReview(id, button){
   const match = matches.find(m => String(m.id) === String(id));
   if (!match) return;
-  const box = document.getElementById(`ai-${id}`);
+  let box = document.getElementById(`ai-${id}`);
   if (box && box.querySelector('pre').textContent.trim()) {
     const isOpen = box.classList.toggle('show');
     if (button) {
@@ -2371,10 +2379,15 @@ async function runAiReview(id, button){
   }
   if (button) button.disabled = true;
   await fetchAndApply(match, button);
+  // render() inside fetchAndApply may have rebuilt the card DOM, so re-query
+  // the box/button instead of trusting the references captured before the fetch.
+  box = document.getElementById(`ai-${id}`);
+  button = document.querySelector(`[data-ai="${id}"]`) || button;
   if (box) box.classList.add('show');
   if (button) {
     button.dataset.expanded = 'true';
     button.textContent = '收起分析';
+    button.disabled = false;
   }
 }
 async function fetchAndApply(match, button){
@@ -2385,7 +2398,7 @@ async function fetchAndApply(match, button){
   const pre = box.querySelector('pre');
   status.textContent = '正在刷新 AI 结论...';
   try {
-    const res = await fetch('/api/predict', {
+    const res = await fetch(`${API_BASE}/api/predict`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ match, manual: true })
@@ -2393,7 +2406,8 @@ async function fetchAndApply(match, button){
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '请求失败');
     aiResults.set(data.id, data);
-    applyAiResult(data);
+    const changed = applyPredictionToMatchCard(match, data);
+    if (changed) render(); else applyAiResult(data);
   } catch (err) {
     summary.textContent = `无法生成 AI 结论：${err.message}`;
     summary.classList.add('show');
@@ -2413,6 +2427,22 @@ function applyAiResult(data){
   summary.classList.remove('show');
   box.querySelector('pre').textContent = data.analysis || '';
   status.textContent = `${data.generated_at || ''}${data.cached ? ' · 缓存' : ''} · ${data.model || '未知模型'}`;
+}
+function applyPredictionToMatchCard(match, data){
+  if (!match || match.finished) return false;
+  let changed = false;
+  if (data.predicted_score) { match.score = data.predicted_score; changed = true; }
+  if (data.predicted_pick) {
+    match.api = data.predicted_pick;
+    match.pick = data.predicted_pick === '主胜' ? match.home : data.predicted_pick === '客胜' ? match.away : '平局';
+    changed = true;
+  }
+  if (Array.isArray(data.predicted_probs) && data.predicted_probs.length === 3) {
+    match.probs = data.predicted_probs.map(Number);
+    changed = true;
+  }
+  if (changed) match.why = data.summary || match.why;
+  return changed;
 }
 async function refreshAllAi(){
   for (const match of pendingMatches()) {
@@ -2508,7 +2538,7 @@ async function loadResults(options={}){
     button.textContent = options.manual ? '刷新中...' : '刷新';
   }
   try {
-    const res = await fetch('/api/results');
+    const res = await fetch(`${API_BASE}/api/results`);
     const data = await res.json();
     finishedResults = Array.isArray(data.results) ? data.results : [];
     markFinishedMatches(staticMatches);
@@ -2584,7 +2614,7 @@ async function boot(){
     const source = document.getElementById('oddsSource');
     if (source) source.querySelector('span').innerHTML = `<b>模拟账户：</b>账户读取失败：${escapeHtml(err.message)}`;
   }
-  refreshSportteryOdds();
+  refreshMarketOdds();
 }
 boot();
 </script>

@@ -36,11 +36,10 @@ FOOTBALL_DATA_BASE_URL = os.getenv("FOOTBALL_DATA_BASE_URL", "https://api.footba
 THESPORTSDB_BASE_URL = os.getenv("THESPORTSDB_BASE_URL", "https://www.thesportsdb.com/api/v1/json").rstrip("/")
 SPORTTERY_PROXY_URL = os.getenv("SPORTTERY_PROXY_URL", "").strip()
 SPORTTERY_PROXY_URLS = [item.strip() for item in os.getenv("SPORTTERY_PROXY_URLS", "").split(",") if item.strip()]
-SPORTTERY_OFFICIAL_URL = "https://webapi.sporttery.cn/gateway/uniform/football/getMatchListV1.qry?clientCode=3001"
 SPORTTERY_CALCULATOR_URL = "https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?channel=c&poolCode=hhad,had"
 SPORTTERY_HTTP_PROXY = os.getenv("SPORTTERY_HTTP_PROXY", "http://127.0.0.1:7890").strip()
 CACHE_TTL_SECONDS = 600
-PROMPT_VERSION = "casual-v3"
+PROMPT_VERSION = "casual-v5-fifa-rank-gap"
 PREDICTION_CACHE: dict[str, dict] = {}
 DATA_CACHE: dict[str, dict] = {}
 RATE_LIMITS: dict[str, list[float]] = {}
@@ -116,6 +115,39 @@ TEAM_EN = {
     "牙买加": "Jamaica",
 }
 
+# FIFA Men's World Ranking points (official release closest to today), keyed by English
+# team name. This is the only real numeric "team strength" signal available when no
+# market odds exist for a match — it replaces relying on the LLM's own memorized
+# stereotypes about which teams are historically strong.
+FIFA_RANKING_POINTS = {
+    "Mexico": 1687.48, "South Africa": 1428.38, "Canada": 1559.48, "Qatar": 1450.31,
+    "United States": 1671.23, "Paraguay": 1505.35, "Germany": 1735.77, "Curacao": 1294.77,
+    "Uruguay": 1673.07, "Saudi Arabia": 1423.88, "Japan": 1661.58, "Netherlands": 1753.57,
+    "Belgium": 1742.24, "Egypt": 1562.37, "Switzerland": 1650.06, "Austria": 1597.40,
+    "France": 1870.70, "Senegal": 1684.07, "Argentina": 1877.27, "Algeria": 1571.03,
+    "Italy": 1704.73, "Australia": 1579.34, "Norway": 1557.44, "Ghana": 1346.88,
+    "Portugal": 1767.85, "Uzbekistan": 1458.73, "Morocco": 1755.10, "Haiti": 1293.10,
+    "England": 1828.02, "Croatia": 1714.87, "Denmark": 1619.47, "Tunisia": 1476.41,
+    "Scotland": 1503.34, "Ivory Coast": 1540.87, "Brazil": 1765.86,
+    "United Arab Emirates": 1370.47, "Spain": 1874.71, "Cape Verde": 1371.11,
+    "Serbia": 1502.13, "New Zealand": 1275.58, "Colombia": 1698.35,
+    "North Macedonia": 1369.16, "Iran": 1619.58, "Jamaica": 1357.84,
+}
+
+
+def fifa_rank_fact(match: dict) -> dict | None:
+    home_en = TEAM_EN.get(match.get("home", ""), match.get("home", ""))
+    away_en = TEAM_EN.get(match.get("away", ""), match.get("away", ""))
+    home_pts = FIFA_RANKING_POINTS.get(home_en)
+    away_pts = FIFA_RANKING_POINTS.get(away_en)
+    if home_pts is None or away_pts is None:
+        return None
+    return {
+        "home_points": home_pts,
+        "away_points": away_pts,
+        "gap": round(home_pts - away_pts, 1),
+    }
+
 SYSTEM_PROMPT = """你正在按 Codex skill `worldcup-2026-predictor` 的方法做 2026 世界杯赛前预测。
 
 硬性规则：
@@ -136,10 +168,18 @@ RULES = """worldcup-2026-predictor skill 分析流程：
 6. 综合以上因素给出最终预测结果。
 
 当前页面基础评分规则：
-- 基本面轨道50%：球队实力层级25%，球队/球员状态15%，赛程场地与晋级动机10%。
+- 基本面轨道50%：球队实力差距25%，球队/球员状态15%，赛程场地与晋级动机10%。
 - 市场/舆情轨道35%：赔率与盘口方向20%，新闻导向10%，公众热度/异常信号5%。
 - 裁判与比赛控制15%：裁判执法严谨度、牌点倾向、犯规尺度、VAR/点球风险。
 - 如果在线情报里存在 sporttery_calculator_snapshot，必须把其中的胜平负/让球胜平负固定奖金、让球数、单关/串关支持、赔率更新时间作为市场/投注轨道依据；它不是赛果事实。
+
+球队实力差距必须依据比赛快照里的 fifa_ranking_points.gap（主队积分减客队积分，真实数据，禁止凭球队历史名气/夺冠次数/球迷印象去覆盖它）做连续判断，不允许跳到"强队=碾压"的刻板结论：
+- |gap| ≤ 50：实力同档，禁止给任意一方75%以上胜率，禁止预测净胜2球以上的比分。
+- 50 < |gap| ≤ 150：小幅优势，胜率建议55%~68%，净胜球预测不超过2球。
+- 150 < |gap| ≤ 300：明显优势，胜率建议60%~78%，净胜球预测不超过3球。
+- |gap| > 300：可进入高/极高置信度（63%以上），但世界杯单场比赛仍有偶然性，净胜球预测原则上不超过3球；若要预测4球以上净胜，必须在"关键依据"里给出对方大面积伤停/红牌/极端状态等具体证据，否则视为过度自信并下调到3球以内。
+- 若快照没有 fifa_ranking_points（两队不在已知列表内），必须写明"无实力分值数据，仅依据可获得情报做谨慎判断"，并避免给出极端胜率或大比分。
+- 同一支强队对阵不同对手时，gap 不同，胜率和比分必须相应不同；如果你发现自己对多场不同比赛给出了相近的胜率区间或相同的推荐比分，先重新检查 gap 数值再下笔。
 
 双轨背离预测：
 - 基本面轨道和市场/舆情轨道同向：提高置信度。
@@ -268,6 +308,29 @@ def prediction_reuse_seconds(match: dict) -> int:
     return PREDICTION_REUSE_SECONDS
 
 
+def with_predicted_fields(payload: dict, match: dict) -> dict:
+    analysis = payload.get("analysis", "")
+    score = normalize_score_text(extract_predicted_score(analysis))
+    if score:
+        payload["predicted_score"] = score
+    pick = pick_from_score(score) or extract_predicted_pick(analysis)
+    if pick:
+        payload["predicted_pick"] = pick
+    probs = extract_predicted_probs(analysis)
+    if probs:
+        payload["predicted_probs"] = probs
+    payload["debug"] = {
+        "matchId": match.get("id"),
+        "hasRealOdds": "ESPN" in str(match.get("oddsSource") or ""),
+        "oddsSource": match.get("oddsSource") or None,
+        "fifaRankGap": (fifa_rank_fact(match) or {}).get("gap"),
+        "predictedProbs": probs,
+        "predictedScore": score or None,
+        "scoreGenerationMethod": "llm_freeform_text_regex_extract",
+    }
+    return payload
+
+
 def get_prediction(api_key: str, match: dict) -> dict:
     key = cache_key(match)
     match_id = match_id_key(match)
@@ -294,7 +357,7 @@ def get_prediction(api_key: str, match: dict) -> dict:
         payload["cached"] = True
         payload["cache_source"] = "memory"
         payload["cache_ttl_seconds"] = reuse_seconds
-        return payload
+        return with_predicted_fields(payload, match)
     persisted = get_recent_prediction_payload(match_id, reuse_seconds, prompt_version=PROMPT_VERSION)
     if persisted:
         PREDICTION_CACHE[key] = {"ts": now, "payload": persisted}
@@ -302,7 +365,7 @@ def get_prediction(api_key: str, match: dict) -> dict:
         payload["cached"] = True
         payload["cache_source"] = "sqlite"
         payload["cache_ttl_seconds"] = reuse_seconds
-        return payload
+        return with_predicted_fields(payload, match)
     intelligence = collect_match_intelligence(match)
     analysis = call_openai(api_key, match, intelligence)
     payload = {
@@ -317,7 +380,7 @@ def get_prediction(api_key: str, match: dict) -> dict:
     }
     save_prediction(match, payload)
     PREDICTION_CACHE[key] = {"ts": now, "payload": payload}
-    return payload
+    return with_predicted_fields(payload, match)
 
 
 def get_recent_prediction_payload(match_id: str, max_age_seconds: int, prompt_version: str | None = None) -> dict | None:
@@ -1189,6 +1252,22 @@ def extract_predicted_pick(text: str) -> str:
     return ""
 
 
+def extract_predicted_probs(text: str) -> list[float] | None:
+    clean_text = re.sub(r"[*_`]+", "", text or "")
+    patterns = [
+        r"主胜\s*[：:]?\s*(\d{1,3}(?:\.\d+)?)\s*%.{0,6}平局\s*[：:]?\s*(\d{1,3}(?:\.\d+)?)\s*%.{0,6}客胜\s*[：:]?\s*(\d{1,3}(?:\.\d+)?)\s*%",
+        r"胜平负概率[：:][^\n]*?(\d{1,3}(?:\.\d+)?)\s*%[^\n]*?(\d{1,3}(?:\.\d+)?)\s*%[^\n]*?(\d{1,3}(?:\.\d+)?)\s*%",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, clean_text)
+        if match:
+            try:
+                return [round(float(match.group(i)), 1) for i in (1, 2, 3)]
+            except ValueError:
+                continue
+    return None
+
+
 def strip_tags(value: str) -> str:
     value = re.sub(r"<[^>]+>", " ", value)
     value = unescape(value)
@@ -1265,6 +1344,16 @@ def decimal_to_american(decimal_odds: float | None) -> int | None:
     if decimal_odds >= 2:
         return round((decimal_odds - 1) * 100)
     return round(-100 / (decimal_odds - 1))
+
+
+def american_to_decimal(value) -> float | None:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if value == 0:
+        return None
+    return round(1 + value / 100, 4) if value > 0 else round(1 + 100 / abs(value), 4)
 
 
 def probs_from_decimal(decimal_odds: list[float]) -> list[int]:
@@ -1376,7 +1465,7 @@ def cn_datetime(date_text: str) -> str:
     return f"{matched.group(1)}-{matched.group(2)}-{matched.group(3)} {matched.group(4) or '时间待定'}"
 
 
-def sporttery_item_to_match(item: dict, idx: int) -> dict:
+def sporttery_item_to_match(item: dict, idx: int, source_label: str = "中国体育彩票竞彩网") -> dict:
     decimal = item.get("decimal") or []
     probs = probs_from_decimal(decimal)
     pick, api_pick = pick_from_probs(item.get("home", ""), item.get("away", ""), probs)
@@ -1384,7 +1473,8 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
     goal_line = str(item.get("goal_line") or "").strip()
     market_name = "让球胜平负" if market_code == "HHAD" else "胜平负"
     market_suffix = f"({goal_line})" if goal_line else ""
-    odds_source = f"中国体育彩票竞彩网{market_name}固定奖金"
+    is_sporttery = "体育彩票" in source_label
+    odds_source = f"{source_label}{market_name}固定奖金" if is_sporttery else f"{source_label}{market_name}赔率"
     return {
         "id": f"tc-{idx + 1}",
         "d": cn_date(item.get("match_time")),
@@ -1393,7 +1483,7 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "matchId": item.get("match_id") or "",
         "home": item.get("home"),
         "away": item.get("away"),
-        "venue": f"{item.get('league') or '世界杯'} · 中国体育彩票",
+        "venue": f"{item.get('league') or '世界杯'} · {source_label}",
         "odds": item.get("american") or [decimal_to_american(value) for value in decimal],
         "oddsDecimal": decimal,
         "oddsSource": odds_source,
@@ -1410,12 +1500,13 @@ def sporttery_item_to_match(item: dict, idx: int) -> dict:
         "score": score_from_market(api_pick, probs),
         "conf": conf_from_prob(max(probs)),
         "probs": probs,
-        "why": f"以中国体育彩票竞彩网当前{market_name}{market_suffix}固定奖金为主数据源。{api_pick}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。",
+        "why": f"以{source_label}当前{market_name}{market_suffix}{'固定奖金' if is_sporttery else '赔率'}为主数据源。{api_pick}对应的隐含概率最高；仍需结合阵容、伤病、裁判和临场新闻复核。",
     }
 
 
 def sporttery_snapshot_to_matches(snapshot: dict) -> list[dict]:
-    return [sporttery_item_to_match(item, idx) for idx, item in enumerate(snapshot.get("matches", [])[:40])]
+    source_label = snapshot.get("source") or "中国体育彩票竞彩网"
+    return [sporttery_item_to_match(item, idx, source_label) for idx, item in enumerate(snapshot.get("matches", [])[:40])]
 
 
 def sporttery_play_label(match: dict) -> str:
@@ -1554,18 +1645,6 @@ def parse_sporttery_matches(data: dict) -> list[dict]:
     return matches
 
 
-def build_sporttery_urls() -> list[str]:
-    urls = []
-    for raw_url in [SPORTTERY_PROXY_URL, *SPORTTERY_PROXY_URLS, SPORTTERY_OFFICIAL_URL]:
-        if not raw_url:
-            continue
-        if "{url}" in raw_url:
-            raw_url = raw_url.replace("{url}", parse.quote(SPORTTERY_OFFICIAL_URL, safe=""))
-        if raw_url not in urls:
-            urls.append(raw_url)
-    return urls
-
-
 def build_sporttery_calculator_urls() -> list[str]:
     urls = []
     for raw_url in [SPORTTERY_PROXY_URL, *SPORTTERY_PROXY_URLS, SPORTTERY_CALCULATOR_URL]:
@@ -1576,27 +1655,6 @@ def build_sporttery_calculator_urls() -> list[str]:
         if raw_url not in urls:
             urls.append(raw_url)
     return urls
-
-
-def sporttery_fetch_payload() -> tuple[dict | None, str, str]:
-    errors = []
-    for url in build_sporttery_urls():
-        try:
-            use_proxy = bool(SPORTTERY_HTTP_PROXY) and url == SPORTTERY_OFFICIAL_URL
-            data = fetch_json_request_cached(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                "Referer": "https://www.sporttery.cn/",
-                "Origin": "https://www.sporttery.cn",
-                "Accept": "application/json,text/plain,*/*",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-            }, ttl_seconds=60, timeout_seconds=8, proxy_url=SPORTTERY_HTTP_PROXY if use_proxy else "")
-            return unwrap_proxy_json(data), url, ""
-        except Exception as exc:
-            errors.append(f"{url}: {str(exc)[:180]}")
-    source_url = build_sporttery_urls()[0] if build_sporttery_urls() else SPORTTERY_OFFICIAL_URL
-    return None, source_url, " | ".join(errors)
 
 
 def sporttery_calculator_fetch_payload(force_refresh: bool = False) -> tuple[dict | None, str, str]:
@@ -1620,20 +1678,96 @@ def sporttery_calculator_fetch_payload(force_refresh: bool = False) -> tuple[dic
     return None, source_url, " | ".join(errors)
 
 
-def _build_sporttery_odds_snapshot() -> dict:
-    data, url, err = sporttery_fetch_payload()
-    if data is None:
+ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+ESPN_ODDS_SOURCE = "ESPN（DraftKings）"
+
+
+def fetch_espn_scoreboard(date_str: str) -> dict:
+    return fetch_json_cached(f"{ESPN_SCOREBOARD_URL}?dates={date_str}", ttl_seconds=90)
+
+
+def espn_date_to_beijing(date_text: str) -> str:
+    for fmt in ("%Y-%m-%dT%H:%MZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            dt = datetime.strptime(date_text, fmt).replace(tzinfo=timezone.utc)
+            return dt.astimezone(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+    return ""
+
+
+def parse_espn_events(data: dict) -> list[dict]:
+    matches = []
+    for event in data.get("events", []) or []:
+        competitions = event.get("competitions") or []
+        if not competitions:
+            continue
+        comp = competitions[0]
+        competitors = comp.get("competitors") or []
+        home_team = next((c for c in competitors if c.get("homeAway") == "home"), None)
+        away_team = next((c for c in competitors if c.get("homeAway") == "away"), None)
+        if not home_team or not away_team:
+            continue
+        home_en = ((home_team.get("team") or {}).get("displayName") or "").strip()
+        away_en = ((away_team.get("team") or {}).get("displayName") or "").strip()
+        if not home_en or not away_en:
+            continue
+        odds_list = [o for o in (comp.get("odds") or []) if o]
+        if not odds_list:
+            continue
+        moneyline = odds_list[0].get("moneyline") or {}
+
+        def side_odds(side: str) -> float | None:
+            node = moneyline.get(side) or {}
+            leg = node.get("close") or node.get("open") or {}
+            return american_to_decimal(leg.get("odds"))
+
+        home_odds, draw_odds, away_odds = side_odds("home"), side_odds("draw"), side_odds("away")
+        if not (home_odds and draw_odds and away_odds):
+            continue
+        match_time = espn_date_to_beijing(event.get("date") or "")
+        if not match_time:
+            continue
+        matches.append({
+            "match_id": event.get("id"),
+            "home": EN_TO_CN.get(home_en.lower(), home_en),
+            "away": EN_TO_CN.get(away_en.lower(), away_en),
+            "league": "世界杯",
+            "match_time": match_time,
+            "decimal": [home_odds, draw_odds, away_odds],
+        })
+    return matches
+
+
+def _build_espn_odds_snapshot() -> dict:
+    today_utc = datetime.now(timezone.utc).date()
+    errors = []
+    parsed_matches = []
+    seen_ids = set()
+    for offset in range(-1, 5):
+        date_str = (today_utc + timedelta(days=offset)).strftime("%Y%m%d")
+        try:
+            data = fetch_espn_scoreboard(date_str)
+        except Exception as exc:
+            errors.append(f"{date_str}: {str(exc)[:160]}")
+            continue
+        for item in parse_espn_events(data):
+            match_id = item.get("match_id")
+            if match_id in seen_ids:
+                continue
+            seen_ids.add(match_id)
+            parsed_matches.append(item)
+    if not parsed_matches and errors:
         return {
-            "source": "中国体育彩票竞彩网",
-            "source_url": url,
+            "source": ESPN_ODDS_SOURCE,
+            "source_url": ESPN_SCOREBOARD_URL,
             "status": "blocked_or_unavailable",
-            "note": "已接入免费体彩网关，但当前服务器访问被站点安全策略拦截或网络不可用。可配置 SPORTTERY_PROXY_URL 或 SPORTTERY_PROXY_URLS；支持直接 JSON，也支持 AllOrigins contents 包装格式和 {url} 模板。",
-            "error": err[:300],
+            "note": "ESPN 赔率接口无法访问或暂无返回数据。",
+            "error": " | ".join(errors)[:300],
             "matches": [],
             "generated_at": beijing_time(),
-            "official_url": SPORTTERY_OFFICIAL_URL,
+            "official_url": ESPN_SCOREBOARD_URL,
         }
-    parsed_matches = parse_sporttery_matches(data)
     finished_results = fetch_worldcup_results()
     matches = []
     finished_count = 0
@@ -1644,20 +1778,20 @@ def _build_sporttery_odds_snapshot() -> dict:
             continue
         matches.append(item)
     if matches:
-        save_odds_snapshots(matches, "中国体育彩票竞彩网")
+        save_odds_snapshots(matches, ESPN_ODDS_SOURCE)
     trends = get_odds_trends(matches)
     for item in matches:
         item["trend"] = trends.get(odds_match_key(item), [])
     return {
-        "source": "中国体育彩票竞彩网",
-        "source_url": url,
+        "source": ESPN_ODDS_SOURCE,
+        "source_url": ESPN_SCOREBOARD_URL,
         "status": "ok" if matches else "no_matches_parsed",
-        "note": "固定奖金为十进制赔率，前端会换算成美式赔率用于原模拟盘。已完赛场次会自动移出待预测列表。",
+        "note": "ESPN/DraftKings 美式赔率换算的十进制赔率，单一博彩商参考价，与体彩等亚洲盘口可能存在差异。已完赛场次会自动移出待预测列表。",
         "matches": matches[:200],
         "raw_count": len(parsed_matches),
         "filtered_finished_count": finished_count,
         "generated_at": beijing_time(),
-        "official_url": SPORTTERY_OFFICIAL_URL,
+        "official_url": ESPN_SCOREBOARD_URL,
     }
 
 
@@ -1750,8 +1884,8 @@ def refresh_snapshot(name: str, builder) -> None:
         print(f"[snapshot-worker] {beijing_time()} {name} error={exc}", flush=True)
 
 
-def sporttery_odds_snapshot() -> dict:
-    return cached_snapshot("odds", _build_sporttery_odds_snapshot, ODDS_REFRESH_SECONDS * 2)
+def espn_odds_snapshot() -> dict:
+    return cached_snapshot("odds", _build_espn_odds_snapshot, ODDS_REFRESH_SECONDS * 2)
 
 
 def sporttery_calculator_snapshot(force_refresh: bool = False) -> dict:
@@ -1792,16 +1926,16 @@ def sporttery_calculator_snapshot(force_refresh: bool = False) -> dict:
         raise
 
 
-def sporttery_tool(home_cn: str, away_cn: str) -> list[dict]:
-    snapshot = sporttery_odds_snapshot()
+def espn_odds_tool(home_cn: str, away_cn: str) -> list[dict]:
+    snapshot = espn_odds_snapshot()
     items = []
     for item in snapshot.get("matches", []):
         text = f"{item.get('home', '')} {item.get('away', '')}"
         if home_cn in text or away_cn in text:
             items.append(item)
     return [{
-        "type": "sporttery_fixed_bonus_snapshot",
-        "source": "中国体育彩票竞彩网",
+        "type": "espn_odds_snapshot",
+        "source": ESPN_ODDS_SOURCE,
         "status": snapshot.get("status"),
         "source_url": snapshot.get("source_url"),
         "note": snapshot.get("note"),
@@ -2166,8 +2300,11 @@ def collect_match_intelligence(match: dict) -> list[dict]:
     away_cn = match.get("away", "")
     home = TEAM_EN.get(match.get("home", ""), match.get("home", ""))
     away = TEAM_EN.get(match.get("away", ""), match.get("away", ""))
-    collected = [
-        draw_assessment_from_probs(match.get("probs") or [], match.get("conf") or ""),
+    has_real_odds = "ESPN" in str(match.get("oddsSource") or "")
+    collected = []
+    if has_real_odds:
+        collected.append(draw_assessment_from_probs(match.get("probs") or [], match.get("conf") or ""))
+    collected += [
         {
             "type": "official_source",
             "title": "FIFA official match schedule, fixtures and results",
@@ -2194,7 +2331,7 @@ def collect_match_intelligence(match: dict) -> list[dict]:
     collected.extend(football_data_tool(home, away))
     collected.extend(api_football_tool(home, away))
     collected.extend(odds_api_tool(home, away))
-    collected.extend(sporttery_tool(home_cn, away_cn))
+    collected.extend(espn_odds_tool(home_cn, away_cn))
     collected.extend(sporttery_calculator_tool(home_cn, away_cn))
     queries = [
         f"{home} {away} 2026 World Cup fixture group standings result",
@@ -2220,6 +2357,7 @@ def json_response(handler: SimpleHTTPRequestHandler, status: int, payload: dict)
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -2336,10 +2474,18 @@ class Handler(SimpleHTTPRequestHandler):
             return str(ROOT / "__not_found__")
         return str(target)
 
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:
         parsed = parse.urlparse(self.path)
         if parsed.path == "/api/odds":
-            json_response(self, 200, sporttery_odds_snapshot())
+            json_response(self, 200, espn_odds_snapshot())
             return
         if parsed.path == "/api/sporttery-calculator":
             params = parse.parse_qs(parsed.query)
@@ -2686,7 +2832,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 """
     text = ""
     try:
-        plan, text = call_llm_json(api_key, prompt, max_tokens=2200)
+        plan, text = call_llm_json(api_key, prompt, max_tokens=6000)
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         summary = f"LLM API 错误 {exc.code}: {detail[:180]}"
@@ -2729,7 +2875,7 @@ def get_auto_bet_plan(api_key: str, payload: dict) -> dict:
 - 仍然只输出 <json>...</json>。
 """
         try:
-            plan, text = call_llm_json(api_key, retry_prompt, max_tokens=2600)
+            plan, text = call_llm_json(api_key, retry_prompt, max_tokens=6000)
         except Exception:
             pass
 
@@ -2955,11 +3101,24 @@ def error_decisions(matches: list[dict], reason: str) -> list[dict]:
     ]
 
 
+def public_match_snapshot(match: dict) -> dict:
+    keys = ("id", "home", "away", "d", "time", "venue", "matchNo", "marketCode", "marketName", "goalLine")
+    snapshot = {k: match.get(k) for k in keys if match.get(k) not in (None, "")}
+    if "ESPN" in str(match.get("oddsSource") or ""):
+        snapshot["market_odds_decimal"] = match.get("oddsDecimal")
+        snapshot["market_probs"] = match.get("probs")
+        snapshot["odds_source"] = match.get("oddsSource")
+    rank_fact = fifa_rank_fact(match)
+    if rank_fact:
+        snapshot["fifa_ranking_points"] = rank_fact
+    return snapshot
+
+
 def call_openai(api_key: str, match: dict, intelligence: list[dict]) -> str:
     user_prompt = f"""直接给这场 2026 世界杯比赛的预测分析。不要写开场白，不要说“我将按照规则分析”，第一行就进入结论。
 
-比赛快照：
-{json.dumps(match, ensure_ascii=False, indent=2)}
+比赛快照（仅赛程事实；不包含任何胜率/赔率，除非确有真实市场数据）：
+{json.dumps(public_match_snapshot(match), ensure_ascii=False, indent=2)}
 
 后端在线情报工具返回的搜索摘要和来源：
 {json.dumps(intelligence, ensure_ascii=False, indent=2)}
@@ -2979,7 +3138,7 @@ def call_openai(api_key: str, match: dict, intelligence: list[dict]) -> str:
 2. 关键依据
 - 小组赛赛程/已结束赛果/小组排名：优先使用在线情报工具里的可靠来源；没有可靠结果就标注需补充。
 - 双方官方大名单与球员状态：说明大名单、年龄身高、伤病、更衣室/负面消息、当家球星状态是否已知；在线情报没有给出就不要编造。
-- 双方综合实力与整体状态：基于快照和通用实力层级做推断，并标明这是推断。
+- 双方综合实力与整体状态：必须以比赛快照里的 fifa_ranking_points.gap 数值为依据，按 RULES 里的 gap 分档给出实力差距判断；不允许只凭球队历史名气/夺冠次数跳到"碾压"结论。如果快照没有 fifa_ranking_points，明确写"无实力分值数据"。
 - 对手信息如何影响本场：写出 2-3 个具体对位因素。
 - 淘汰赛首轮路径与名次动机：如果当前排名/出线形势未知，明确写无法判断；如果可推断动机，也必须说明依据。
 - 综合结论：说明是否调整静态卡片预测。
@@ -3033,7 +3192,7 @@ def run_auto_worker_once() -> dict:
     state = get_sim_state(account_id)
     snapshot = sporttery_calculator_snapshot(force_refresh=True)
     if snapshot.get("status") != "ok":
-        snapshot = sporttery_odds_snapshot()
+        snapshot = espn_odds_snapshot()
     matches = sporttery_snapshot_to_matches(snapshot) if snapshot.get("status") == "ok" else []
     signature = odds_signature(matches) if matches else ""
     settle_result = settle_sim_account(account_id)
@@ -3132,7 +3291,7 @@ def snapshot_worker_loop() -> None:
             refresh_snapshot("results", _build_match_results)
             next_results = now + RESULTS_REFRESH_SECONDS
         if now >= next_odds:
-            refresh_snapshot("odds", _build_sporttery_odds_snapshot)
+            refresh_snapshot("odds", _build_espn_odds_snapshot)
             next_odds = now + ODDS_REFRESH_SECONDS
         time.sleep(5)
 
