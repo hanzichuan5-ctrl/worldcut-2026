@@ -24,7 +24,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "prediction_history.sqlite3"
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
-BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com").rstrip("/")
+BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 SEARCH_API_URL = os.getenv("SEARCH_API_URL", "").strip()
 APIFOOTBALL_API_KEY = os.getenv("APIFOOTBALL_API_KEY", "").strip()
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "").strip()
@@ -2670,7 +2670,7 @@ def call_llm_json(api_key: str, prompt: str, max_tokens: int = 2200) -> tuple[di
         "max_tokens": max_tokens,
     }
     req = request.Request(
-        f"{BASE_URL}/v1/chat/completions",
+        f"{BASE_URL}/chat/completions",
         data=json.dumps(body).encode("utf-8"),
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
@@ -2701,7 +2701,7 @@ def call_llm_json(api_key: str, prompt: str, max_tokens: int = 2200) -> tuple[di
             "max_tokens": max_tokens,
         }
         repair_req = request.Request(
-            f"{BASE_URL}/v1/chat/completions",
+            f"{BASE_URL}/chat/completions",
             data=json.dumps(repair_body).encode("utf-8"),
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             method="POST",
@@ -3160,10 +3160,10 @@ def call_openai(api_key: str, match: dict, intelligence: list[dict]) -> str:
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.3,
-        "max_tokens": 1800,
+        "max_tokens": 6000,
     }
     req = request.Request(
-        f"{BASE_URL}/v1/chat/completions",
+        f"{BASE_URL}/chat/completions",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
