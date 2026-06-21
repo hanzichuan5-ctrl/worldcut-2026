@@ -635,9 +635,21 @@ function scoreFromMarket(api, probs){
     return openGame ? '2-2' : '0-0';
   }
   const homeWin = api === '主胜';
+  const opponentProb = p[homeWin ? 2 : 0];
   let winner = 2;
   let loser = 1;
-  if (fav >= 78 || gap >= 65) {
+  const recentHighScoreSignal = fav >= 65 || gap >= 45;
+  const goalDiffMotivation = gap >= 45;
+  const opponentCollapseRisk = opponentProb >= 16 && opponentProb <= 22;
+  const blowoutSignal = openGame && draw <= 28 && (fav >= 65 || gap >= 45) && recentHighScoreSignal && (goalDiffMotivation || opponentCollapseRisk);
+  const extremeCleanBlowout = openGame && (fav >= 65 || gap >= 45) && opponentProb < 16;
+  if (blowoutSignal && opponentProb >= 16) {
+    winner = openGame ? 5 : 4;
+    loser = 1;
+  } else if (extremeCleanBlowout) {
+    winner = openGame ? 5 : 4;
+    loser = 0;
+  } else if (fav >= 78 || gap >= 65) {
     winner = openGame ? 4 : 3;
     loser = p[homeWin ? 2 : 0] >= 16 ? 1 : 0;
   } else if (fav >= 68 || gap >= 48) {
