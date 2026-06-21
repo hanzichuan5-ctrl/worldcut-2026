@@ -1443,7 +1443,7 @@ def score_from_market(api_pick: str, probs: list[int]) -> str:
         and recent_high_score_signal
         and (goal_diff_motivation or opponent_collapse_risk)
     )
-    extreme_clean_blowout = open_game and (fav >= 65 or gap >= 45) and opponent_prob < 16
+    extreme_clean_blowout = open_game and (fav >= 90 or gap >= 85) and opponent_prob < 16
     if blowout_signal and opponent_prob >= 16:
         winner = 5 if open_game else 4
         loser = 1

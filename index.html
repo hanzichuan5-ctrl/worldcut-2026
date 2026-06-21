@@ -642,7 +642,7 @@ function scoreFromMarket(api, probs){
   const goalDiffMotivation = gap >= 45;
   const opponentCollapseRisk = opponentProb >= 16 && opponentProb <= 22;
   const blowoutSignal = openGame && draw <= 28 && (fav >= 65 || gap >= 45) && recentHighScoreSignal && (goalDiffMotivation || opponentCollapseRisk);
-  const extremeCleanBlowout = openGame && (fav >= 65 || gap >= 45) && opponentProb < 16;
+  const extremeCleanBlowout = openGame && (fav >= 90 || gap >= 85) && opponentProb < 16;
   if (blowoutSignal && opponentProb >= 16) {
     winner = openGame ? 5 : 4;
     loser = 1;
